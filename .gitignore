@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Environment Variables & Secrets
+.env
+.env.local
+
+# Local SQLite testing database
+*.sqlite3
+
+# Static / Media local files
+media/
