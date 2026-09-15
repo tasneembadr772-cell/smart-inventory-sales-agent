@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Home | {{ project_name }}{% endblock %}
+
+{% block content %}
+<div class="hero-section">
+    <div class="hero-badge">System Status: Ready & Online</div>
+    <h1 class="hero-title">{{ project_name }}</h1>
+    <p class="hero-subtitle">
+        Graduation project foundation initialized with clean Model-View-Template (MVT) architecture,
+        PostgreSQL persistence, and modular application boundaries.
+    </p>
+    <div class="hero-actions">
+        <a href="#apps" class="btn btn-primary">Explore Registered Apps</a>
+        <a href="#architecture" class="btn btn-secondary">System Specs</a>
+    </div>
+</div>
+
+<section id="architecture" class="specs-section">
+    <div class="section-header">
+        <h2 class="section-title">Technical Specifications</h2>
+        <p class="section-desc">Core components running on the active system</p>
+    </div>
+
+    <div class="cards-grid">
+        <div class="card spec-card">
+            <div class="card-icon">🐍</div>
+            <h3 class="card-title">Python 3.12+</h3>
+            <p class="card-text">Powered by the modern Python runtime with strict typing compatibility and async support.</p>
+            <span class="tag">Backend Runtime</span>
+        </div>
+
+        <div class="card spec-card">
+            <div class="card-icon">🏛️</div>
+            <h3 class="card-title">Django MVT Architecture</h3>
+            <p class="card-text">Structured with decoupled Models, Views, and Templates under the centralized <code>config/</code> package.</p>
+            <span class="tag">Django Framework</span>
+        </div>
+
+        <div class="card spec-card">
+            <div class="card-icon">🐘</div>
+            <h3 class="card-title">PostgreSQL Database</h3>
+            <p class="card-text">Configured via environment variables (<code>.env</code>) using the high-performance <code>psycopg</code> driver.</p>
+            <span class="tag">Relational DB</span>
+        </div>
+
+        <div class="card spec-card">
+            <div class="card-icon">🎨</div>
+            <h3 class="card-title">HTML5, CSS3 & ES6+</h3>
+            <p class="card-text">Semantic markup, responsive custom CSS variables, and modern modular JavaScript without bulky dependencies.</p>
+            <span class="tag">Frontend Core</span>
+        </div>
+    </div>
+</section>
+
+<section id="apps" class="apps-section">
+    <div class="section-header">
+        <h2 class="section-title">Modular Applications (<code>apps/</code>)</h2>
+        <p class="section-desc">Isolated modules designed for scalable team collaboration</p>
+    </div>
+
+    <div class="apps-grid">
+        <div class="app-card">
+            <div class="app-status active"></div>
+            <h4 class="app-name">apps.core</h4>
+            <p class="app-desc">Foundation layer providing common utilities, base templates, navigation, and landing views.</p>
+            <span class="badge">Active</span>
+        </div>
+
+        <div class="app-card">
+            <div class="app-status pending"></div>
+            <h4 class="app-name">apps.authentication</h4>
+            <p class="app-desc">Authentication and authorization boundaries for user roles, login, tokens, and staff permissions.</p>
+            <span class="badge">Scaffolded</span>
+        </div>
+
+        <div class="app-card">
+            <div class="app-status pending"></div>
+            <h4 class="app-name">apps.domain_app</h4>
+            <p class="app-desc">Dedicated business domain layer reserved for future inventory, catalog, and sales workflows.</p>
+            <span class="badge">Scaffolded</span>
+        </div>
+
+        <div class="app-card">
+            <div class="app-status pending"></div>
+            <h4 class="app-name">apps.ai_agent</h4>
+            <p class="app-desc">Reserved intelligent module for predictive stock analytics, sales insights, and AI assistance.</p>
+            <span class="badge">Scaffolded</span>
+        </div>
+    </div>
+</section>
+{% endblock %}

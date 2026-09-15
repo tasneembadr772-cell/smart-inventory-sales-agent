@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>{% block title %}Inventory & Sales Management System{% endblock %}</title>
+    
+    <!-- Modern Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Main Stylesheet -->
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <header class="site-header">
+        <nav class="nav-container">
+            <a href="{% url 'core:home' %}" class="brand-logo">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">Nexus<span>ERP</span></span>
+            </a>
+            <div class="nav-links">
+                <a href="{% url 'core:home' %}" class="nav-link active">Home</a>
+                <a href="#architecture" class="nav-link">Architecture</a>
+                <a href="#apps" class="nav-link">Apps</a>
+                <a href="/admin/" class="nav-link btn-admin" target="_blank">Django Admin</a>
+            </div>
+        </nav>
+    </header>
+
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="site-footer">
+        <div class="footer-container">
+            <p>&copy; {% now "Y" %} Inventory & Sales Management System. All rights reserved.</p>
+            <p class="footer-meta">Built with Python 3.12+, Django (MVT), and PostgreSQL</p>
+        </div>
+    </footer>
+
+    <!-- Main Scripts -->
+    <script src="{% static 'js/main.js' %}" defer></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
