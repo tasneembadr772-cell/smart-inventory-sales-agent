@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Manager Workspace - NexusERP{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card auth-card-wide">
+        <div class="area-badge badge-manager">Verified Role: {{ user.get_role_display }}</div>
+        <h1 class="auth-title">Manager Workspace</h1>
+        <p class="auth-subtitle">Protected Endpoint: Accessible only by Manager and Admin roles</p>
+
+        <div class="status-box-success" style="margin: 2rem 0; padding: 1.5rem; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: var(--radius-md);">
+            <h4 style="color: #38bdf8; margin-bottom: 0.5rem; font-size: 1.1rem;">✅ Authorization Granted</h4>
+            <p style="color: var(--text-secondary); font-size: 0.95rem;">
+                The <code>@manager_required</code> decorator successfully validated your credentials. Standard Users attempting to access this endpoint are intercepted and returned an HTTP 403 Forbidden status.
+            </p>
+        </div>
+
+        <div class="rbac-details" style="text-align: left; background: var(--bg-surface); padding: 1.5rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); margin-bottom: 2rem;">
+            <h4 style="margin-bottom: 1rem;">Privilege Verification Details</h4>
+            <p><strong>Authenticated User:</strong> {{ user.username }} ({{ user.email }})</p>
+            <p><strong>Assigned Role:</strong> <span class="role-badge role-badge-{{ user.role|lower }}">{{ user.get_role_display }}</span></p>
+            <p><strong>Access Method:</strong> <code>@manager_required</code> decorator</p>
+            <p><strong>Hierarchy Level:</strong> Tier 2 (Managerial Oversight)</p>
+        </div>
+
+        <div class="form-actions">
+            <a href="{% url 'authentication:dashboard' %}" class="btn btn-primary">Return to Dashboard</a>
+            <a href="{% url 'authentication:profile' %}" class="btn btn-secondary">View Profile</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

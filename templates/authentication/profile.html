@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}User Profile - NexusERP{% endblock %}
+
+{% block content %}
+<div class="profile-container">
+    <div class="profile-layout">
+        <!-- Sidebar Profile Card -->
+        <div class="profile-sidebar">
+            <div class="profile-card">
+                <div class="avatar-circle">
+                    {{ user.username|slice:":1"|upper }}
+                </div>
+                
+                <h2 class="profile-username">{{ user.get_full_name|default:user.username }}</h2>
+                <p class="profile-handle">@{{ user.username }}</p>
+
+                <div class="profile-role-section">
+                    <span class="role-badge role-badge-{{ user.role|lower }} role-badge-lg">
+                        {{ user.get_role_display }}
+                    </span>
+                    <p class="role-description">{{ role_meta.description }}</p>
+                </div>
+
+                <div class="profile-meta-list">
+                    <div class="meta-item">
+                        <span class="meta-label">Email:</span>
+                        <span class="meta-value">{{ user.email }}</span>
+                    </div>
+                    {% if user.phone_number %}
+                    <div class="meta-item">
+                        <span class="meta-label">Phone:</span>
+                        <span class="meta-value">{{ user.phone_number }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="meta-item">
+                        <span class="meta-label">Member Since:</span>
+                        <span class="meta-value">{{ user.date_joined|date:"M d, Y" }}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Last Login:</span>
+                        <span class="meta-value">{{ user.last_login|date:"M d, Y H:i"|default:"Never" }}</span>
+                    </div>
+                </div>
+
+                <div class="rbac-status-box">
+                    <span class="status-title">🔒 Privilege Isolation Active</span>
+                    <p class="status-text">Your user role is strictly enforced by the backend access control layer.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Edit Form Section -->
+        <div class="profile-main">
+            <div class="card-content">
+                <div class="card-header">
+                    <h3 class="card-title">Edit Profile Information</h3>
+                    <p class="card-subtitle">Manage your personal account details</p>
+                </div>
+
+                {% if form.non_field_errors %}
+                <div class="form-errors-banner">
+                    {% for error in form.non_field_errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <form method="post" action="{% url 'authentication:profile' %}" class="auth-form" novalidate>
+                    {% csrf_token %}
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="{{ form.first_name.id_for_label }}" class="form-label">First Name</label>
+                            {{ form.first_name }}
+                            {% if form.first_name.errors %}
+                                <div class="field-errors">
+                                    {% for error in form.first_name.errors %}<span>{{ error }}</span>{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="form-group">
+                            <label for="{{ form.last_name.id_for_label }}" class="form-label">Last Name</label>
+                            {{ form.last_name }}
+                            {% if form.last_name.errors %}
+                                <div class="field-errors">
+                                    {% for error in form.last_name.errors %}<span>{{ error }}</span>{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="{{ form.email.id_for_label }}" class="form-label">Email Address *</label>
+                            {{ form.email }}
+                            {% if form.email.errors %}
+                                <div class="field-errors">
+                                    {% for error in form.email.errors %}<span>{{ error }}</span>{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="form-group">
+                            <label for="{{ form.phone_number.id_for_label }}" class="form-label">Phone Number</label>
+                            {{ form.phone_number }}
+                            {% if form.phone_number.errors %}
+                                <div class="field-errors">
+                                    {% for error in form.phone_number.errors %}<span>{{ error }}</span>{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="{{ form.bio.id_for_label }}" class="form-label">Bio</label>
+                        {{ form.bio }}
+                        {% if form.bio.errors %}
+                            <div class="field-errors">
+                                {% for error in form.bio.errors %}<span>{{ error }}</span>{% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="security-notice">
+                        <span class="notice-icon">🛡️</span>
+                        <span><strong>RBAC Safety:</strong> The <code>role</code> field cannot be altered through self-service profile updates.</span>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">
+                            Save Changes
+                        </button>
+                        <a href="{% url 'authentication:dashboard' %}" class="btn btn-secondary">
+                            Back to Dashboard
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

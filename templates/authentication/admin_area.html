@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Administrator Console - NexusERP{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card auth-card-wide">
+        <div class="area-badge badge-admin">Verified Role: {{ user.get_role_display }}</div>
+        <h1 class="auth-title">Administrator Console</h1>
+        <p class="auth-subtitle">Protected Endpoint: Accessible STRICTLY by Admin role</p>
+
+        <div class="status-box-danger" style="margin: 2rem 0; padding: 1.5rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-md);">
+            <h4 style="color: #ef4444; margin-bottom: 0.5rem; font-size: 1.1rem;">🛡️ Highest Privilege Level Granted</h4>
+            <p style="color: var(--text-secondary); font-size: 0.95rem;">
+                The <code>@admin_required</code> decorator verified your administrator status. Both Managers and Standard Users attempting to access this endpoint are intercepted and rejected with an HTTP 403 Forbidden status.
+            </p>
+        </div>
+
+        <div class="rbac-details" style="text-align: left; background: var(--bg-surface); padding: 1.5rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); margin-bottom: 2rem;">
+            <h4 style="margin-bottom: 1rem;">Privilege Verification Details</h4>
+            <p><strong>Authenticated User:</strong> {{ user.username }} ({{ user.email }})</p>
+            <p><strong>Assigned Role:</strong> <span class="role-badge role-badge-{{ user.role|lower }}">{{ user.get_role_display }}</span></p>
+            <p><strong>Access Method:</strong> <code>@admin_required</code> decorator</p>
+            <p><strong>Hierarchy Level:</strong> Tier 1 (Full Administration & User Governance)</p>
+        </div>
+
+        <div class="form-actions">
+            <a href="/admin/" target="_blank" class="btn btn-primary">Open Django Admin Panel</a>
+            <a href="{% url 'authentication:dashboard' %}" class="btn btn-secondary">Return to Dashboard</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
