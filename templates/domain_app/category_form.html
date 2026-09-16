@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ title }} | Inventory Management{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:category_list' %}">Categories</a>
+                <span class="sep">/</span>
+                <span class="current">{% if is_edit %}Edit #{{ category.id }}{% else %}New Category{% endif %}</span>
+            </div>
+            <h1 class="page-title">{{ title }}</h1>
+            <p class="page-subtitle">{% if is_edit %}Update category name, description, and catalog availability.{% else %}Define a new category taxonomy for product classification.{% endif %}</p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:category_list' %}" class="btn btn-secondary">
+                Cancel
+            </a>
+        </div>
+    </div>
+
+    <div class="form-container-card card">
+        <form method="post" class="standard-form" novalidate>
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+            <div class="alert alert-error">
+                <span class="alert-icon">⚠️</span>
+                <div class="alert-content">
+                    {% for error in form.non_field_errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="form-grid">
+                <!-- Category Name -->
+                <div class="form-group col-span-2">
+                    <label for="{{ form.name.id_for_label }}" class="form-label">
+                        Category Name <span class="required-star">*</span>
+                    </label>
+                    {{ form.name }}
+                    {% if form.name.errors %}
+                        <span class="field-error">{{ form.name.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Unique name defining this product grouping (e.g., Electronics, Apparel, Raw Materials).</span>
+                </div>
+
+                <!-- Active Status Checkbox -->
+                <div class="form-group checkbox-group col-span-2">
+                    <div class="checkbox-wrapper">
+                        {{ form.is_active }}
+                        <label for="{{ form.is_active.id_for_label }}" class="checkbox-label">
+                            Active Category
+                        </label>
+                    </div>
+                    <span class="field-help">Active categories appear in the product creation dropdown and catalog filters.</span>
+                </div>
+
+                <!-- Description -->
+                <div class="form-group col-span-2">
+                    <label for="{{ form.description.id_for_label }}" class="form-label">
+                        Category Description
+                    </label>
+                    {{ form.description }}
+                    {% if form.description.errors %}
+                        <span class="field-error">{{ form.description.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Optional notes regarding what types of SKUs belong in this category.</span>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <a href="{% url 'domain_app:category_list' %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">
+                    {% if is_edit %}Save Category Changes{% else %}Create Category{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

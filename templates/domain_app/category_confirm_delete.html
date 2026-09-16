@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Confirm Category Deletion: {{ category.name }} | Inventory Management{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:category_list' %}">Categories</a>
+                <span class="sep">/</span>
+                <span class="current">Delete {{ category.name }}</span>
+            </div>
+            <h1 class="page-title text-danger">Delete Category Confirmation</h1>
+        </div>
+    </div>
+
+    <div class="card danger-card">
+        {% if product_count > 0 %}
+        <div class="danger-header">
+            <span class="danger-icon">🛡️</span>
+            <div>
+                <h3>Protected Relational Constraint Alert</h3>
+                <p class="text-warning">
+                    Category <strong>"{{ category.name }}"</strong> cannot be deleted because it is currently assigned to 
+                    <strong>{{ product_count }}</strong> inventory product{{ product_count|pluralize }}.
+                </p>
+            </div>
+        </div>
+
+        <div class="delete-item-summary">
+            <p class="text-secondary">
+                Under the system's normalized relational schema, categories use <code>on_delete=models.PROTECT</code>.
+                To remove this category, you must first reassign or delete its associated products to safeguard inventory integrity.
+            </p>
+        </div>
+
+        <div class="form-actions">
+            <a href="{% url 'domain_app:product_list' %}?category={{ category.id }}" class="btn btn-primary">
+                View Associated Products ({{ product_count }})
+            </a>
+            <a href="{% url 'domain_app:category_list' %}" class="btn btn-secondary">
+                Return to Categories
+            </a>
+        </div>
+        {% else %}
+        <div class="danger-header">
+            <span class="danger-icon">⚠️</span>
+            <div>
+                <h3>Are you sure you want to permanently delete category "{{ category.name }}"?</h3>
+                <p class="text-secondary">This category contains 0 assigned products and can be safely deleted.</p>
+            </div>
+        </div>
+
+        <form method="post" class="danger-form">
+            {% csrf_token %}
+            <div class="form-actions">
+                <a href="{% url 'domain_app:category_list' %}" class="btn btn-secondary">
+                    Cancel & Return
+                </a>
+                <button type="submit" class="btn btn-danger">
+                    Yes, Permanently Delete Category
+                </button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

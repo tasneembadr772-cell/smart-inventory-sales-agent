@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ product.name }} ({{ product.sku }}) | Product Details{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Breadcrumb & Header -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:product_list' %}">Products</a>
+                <span class="sep">/</span>
+                <span class="current">{{ product.sku }}</span>
+            </div>
+            <div class="title-with-badges">
+                <h1 class="page-title">{{ product.name }}</h1>
+                <span class="product-sku-badge-lg">{{ product.sku }}</span>
+                {% if product.stock_status == 'out_of_stock' %}
+                    <span class="badge badge-danger">Out of Stock</span>
+                {% elif product.stock_status == 'low_stock' %}
+                    <span class="badge badge-warning">Low Stock Alert</span>
+                {% else %}
+                    <span class="badge badge-success">In Stock</span>
+                {% endif %}
+                {% if not product.is_active %}
+                    <span class="badge badge-secondary">Archived / Inactive</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">
+                &larr; Back to Catalog
+            </a>
+            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+            <a href="{% url 'domain_app:product_update' product.pk %}" class="btn btn-primary">
+                ✏️ Edit Product
+            </a>
+            {% endif %}
+            {% if user.role == 'ADMIN' or user.is_superuser %}
+            <a href="{% url 'domain_app:product_delete' product.pk %}" class="btn btn-danger">
+                🗑️ Delete
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Product Details Content Grid -->
+    <div class="product-details-grid">
+        <!-- Main Info Card -->
+        <div class="card detail-card main-info">
+            <h2 class="card-section-title">Specifications & Inventory Parameters</h2>
+            
+            <div class="spec-grid">
+                <div class="spec-item">
+                    <span class="spec-label">SKU Identifier</span>
+                    <span class="spec-value font-mono font-bold">{{ product.sku }}</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Assigned Category</span>
+                    <span class="spec-value category-pill">{{ product.category.name }}</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Unit Price</span>
+                    <span class="spec-value font-mono price-highlight">${{ product.price|floatformat:2 }}</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Quantity on Hand</span>
+                    <span class="spec-value font-bold {% if product.stock_quantity == 0 %}text-danger{% elif product.is_low_stock %}text-warning{% else %}text-success{% endif %}">
+                        {{ product.stock_quantity }} units
+                    </span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Reorder Level</span>
+                    <span class="spec-value">{{ product.reorder_level }} units</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Catalog Status</span>
+                    <span class="spec-value">
+                        {% if product.is_active %}
+                            <span class="status-indicator active">Active</span>
+                        {% else %}
+                            <span class="status-indicator inactive">Inactive</span>
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+
+            {% if product.description %}
+            <div class="detail-description-section">
+                <h3 class="subsection-title">Product Description</h3>
+                <div class="description-body">
+                    {{ product.description|linebreaks }}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Sidebar Meta Card -->
+        <div class="card detail-card meta-sidebar">
+            <h3 class="card-section-title">Relational Audit Metadata</h3>
+            <ul class="meta-list">
+                <li class="meta-item">
+                    <span class="meta-label">Primary Key ID</span>
+                    <span class="meta-val font-mono">#{{ product.id }}</span>
+                </li>
+                <li class="meta-item">
+                    <span class="meta-label">Created At</span>
+                    <span class="meta-val">{{ product.created_at|date:"M d, Y H:i" }}</span>
+                </li>
+                <li class="meta-item">
+                    <span class="meta-label">Last Updated</span>
+                    <span class="meta-val">{{ product.updated_at|date:"M d, Y H:i" }}</span>
+                </li>
+                <li class="meta-item">
+                    <span class="meta-label">Category Ref</span>
+                    <span class="meta-val">Category #{{ product.category_id }} (PROTECT)</span>
+                </li>
+            </ul>
+
+            <div class="protection-notice">
+                <span class="notice-icon">🛡️</span>
+                <p>This record is safeguarded by database-level check constraints on price, stock quantity, and unique SKU enforcement.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

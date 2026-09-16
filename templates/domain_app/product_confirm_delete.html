@@ -1,0 +1,64 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Confirm Deletion: {{ product.name }} | Inventory Management{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:product_list' %}">Products</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:product_detail' product.pk %}">{{ product.sku }}</a>
+                <span class="sep">/</span>
+                <span class="current">Delete</span>
+            </div>
+            <h1 class="page-title text-danger">Delete Product Confirmation</h1>
+        </div>
+    </div>
+
+    <div class="card danger-card">
+        <div class="danger-header">
+            <span class="danger-icon">⚠️</span>
+            <div>
+                <h3>Are you sure you want to permanently delete this product?</h3>
+                <p class="text-secondary">This action cannot be undone. All stock tracking and historical references for this SKU will be removed.</p>
+            </div>
+        </div>
+
+        <div class="delete-item-summary">
+            <div class="summary-item">
+                <span class="summary-label">Product Name:</span>
+                <span class="summary-val font-bold">{{ product.name }}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">SKU:</span>
+                <span class="summary-val font-mono">{{ product.sku }}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Category:</span>
+                <span class="summary-val category-pill">{{ product.category.name }}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Current Stock:</span>
+                <span class="summary-val font-bold">{{ product.stock_quantity }} units</span>
+            </div>
+        </div>
+
+        <form method="post" class="danger-form">
+            {% csrf_token %}
+            <div class="form-actions">
+                <a href="{% url 'domain_app:product_detail' product.pk %}" class="btn btn-secondary">
+                    Cancel & Return
+                </a>
+                <button type="submit" class="btn btn-danger">
+                    Yes, Permanently Delete Product
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
