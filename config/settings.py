@@ -153,3 +153,11 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ==============================================================================
+# Authentication & Custom User Configuration
+# ==============================================================================
+AUTH_USER_MODEL = 'authentication.User'
+LOGIN_URL = 'authentication:login'
+LOGIN_REDIRECT_URL = 'authentication:dashboard'
+LOGOUT_REDIRECT_URL = 'authentication:login'

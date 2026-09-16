@@ -24,14 +24,50 @@
                 <span class="logo-icon">⚡</span>
                 <span class="logo-text">Nexus<span>ERP</span></span>
             </a>
+            
             <div class="nav-links">
-                <a href="{% url 'core:home' %}" class="nav-link active">Home</a>
-                <a href="#architecture" class="nav-link">Architecture</a>
-                <a href="#apps" class="nav-link">Apps</a>
-                <a href="/admin/" class="nav-link btn-admin" target="_blank">Django Admin</a>
+                <a href="{% url 'core:home' %}" class="nav-link">Home</a>
+                
+                {% if user.is_authenticated %}
+                    <a href="{% url 'authentication:dashboard' %}" class="nav-link">Dashboard</a>
+                    <a href="{% url 'authentication:profile' %}" class="nav-link">Profile</a>
+                    
+                    <div class="user-nav-status">
+                        <span class="role-badge role-badge-{{ user.role|lower }}">
+                            {{ user.get_role_display }}
+                        </span>
+                        <span class="user-name">{{ user.username }}</span>
+                    </div>
+
+                    <form method="post" action="{% url 'authentication:logout' %}" class="logout-form">
+                        {% csrf_token %}
+                        <button type="submit" class="nav-link btn-logout">Sign Out</button>
+                    </form>
+                {% else %}
+                    <a href="{% url 'authentication:login' %}" class="nav-link">Sign In</a>
+                    <a href="{% url 'authentication:register' %}" class="btn-nav-primary">Register</a>
+                {% endif %}
+
+                <a href="/admin/" class="nav-link btn-admin" target="_blank" title="Django Administration">Admin Panel</a>
             </div>
         </nav>
     </header>
+
+    {% if messages %}
+    <div class="messages-container">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }}">
+            <span class="alert-icon">
+                {% if message.tags == 'error' %}⚠️
+                {% elif message.tags == 'success' %}✅
+                {% elif message.tags == 'warning' %}🔔
+                {% else %}ℹ️{% endif %}
+            </span>
+            <span class="alert-text">{{ message }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <main class="main-content">
         {% block content %}{% endblock %}
@@ -40,7 +76,7 @@
     <footer class="site-footer">
         <div class="footer-container">
             <p>&copy; {% now "Y" %} Inventory & Sales Management System. All rights reserved.</p>
-            <p class="footer-meta">Built with Python 3.12+, Django (MVT), and PostgreSQL</p>
+            <p class="footer-meta">Built with Python 3.12+, Django (MVT), and PostgreSQL / SQLite</p>
         </div>
     </footer>
 

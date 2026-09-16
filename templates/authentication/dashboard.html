@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - NexusERP{% endblock %}
+
+{% block content %}
+<div class="dashboard-wrapper">
+    <!-- Welcome Banner -->
+    <div class="welcome-card">
+        <div class="welcome-content">
+            <div class="welcome-tag">Active Session</div>
+            <h1 class="welcome-title">Welcome, {{ user.get_full_name|default:user.username }}!</h1>
+            <p class="welcome-desc">
+                You are currently authenticated with the 
+                <span class="role-badge role-badge-{{ user.role|lower }}">{{ user.get_role_display }}</span> role.
+            </p>
+        </div>
+        <div class="welcome-actions">
+            <a href="{% url 'authentication:profile' %}" class="btn btn-secondary">Manage Profile</a>
+            {% if user.is_admin_role %}
+            <a href="/admin/" target="_blank" class="btn btn-primary">Django Admin</a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- RBAC Matrix & Access Control Overview -->
+    <div class="section-header" style="margin-top: 3rem;">
+        <h2 class="section-title">Role-Based Access Control (RBAC) Architecture</h2>
+        <p class="section-desc">Test authorization barriers across privilege boundaries</p>
+    </div>
+
+    <div class="cards-grid">
+        <!-- Standard User Area -->
+        <div class="card rbac-card">
+            <div class="card-icon" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">👤</div>
+            <div class="card-badge" style="color: #10b981; border-color: rgba(16, 185, 129, 0.3);">
+                Role: Standard User +
+            </div>
+            <h3 class="card-title">Standard User Area</h3>
+            <p class="card-desc">
+                Accessible to all authenticated accounts (Standard Users, Managers, and Admins).
+            </p>
+            <ul class="permission-list">
+                <li class="perm-allowed">✓ View personal profile & update details</li>
+                <li class="perm-allowed">✓ Access authenticated dashboard</li>
+                <li class="perm-denied">✗ Restricted from managerial actions</li>
+                <li class="perm-denied">✗ Restricted from administrative configuration</li>
+            </ul>
+            <div class="card-action">
+                <a href="{% url 'authentication:profile' %}" class="btn btn-secondary btn-sm">View Profile Area</a>
+            </div>
+        </div>
+
+        <!-- Manager Area -->
+        <div class="card rbac-card">
+            <div class="card-icon" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">📊</div>
+            <div class="card-badge" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">
+                Role: Manager & Admin
+            </div>
+            <h3 class="card-title">Manager Workspace</h3>
+            <p class="card-desc">
+                Restricted to Managers and Administrators via the <code>@manager_required</code> decorator.
+            </p>
+            <ul class="permission-list">
+                <li class="{% if user.can_access_manager_area %}perm-allowed{% else %}perm-denied{% endif %}">
+                    {% if user.can_access_manager_area %}✓{% else %}✗{% endif %} Inventory operations access
+                </li>
+                <li class="{% if user.can_access_manager_area %}perm-allowed{% else %}perm-denied{% endif %}">
+                    {% if user.can_access_manager_area %}✓{% else %}✗{% endif %} Operational audit logs
+                </li>
+                <li class="perm-denied">✗ Cannot modify user roles or system config</li>
+            </ul>
+            <div class="card-action">
+                <a href="{% url 'authentication:manager_area' %}" class="btn {% if user.can_access_manager_area %}btn-primary{% else %}btn-secondary{% endif %} btn-sm">
+                    Access Manager Area
+                </a>
+            </div>
+        </div>
+
+        <!-- Admin Area -->
+        <div class="card rbac-card">
+            <div class="card-icon" style="background: rgba(239, 68, 68, 0.15); color: #ef4444;">🛡️</div>
+            <div class="card-badge" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);">
+                Role: Admin Only
+            </div>
+            <h3 class="card-title">Administrator Console</h3>
+            <p class="card-desc">
+                Restricted strictly to Administrators via the <code>@admin_required</code> decorator.
+            </p>
+            <ul class="permission-list">
+                <li class="{% if user.can_access_admin_area %}perm-allowed{% else %}perm-denied{% endif %}">
+                    {% if user.can_access_admin_area %}✓{% else %}✗{% endif %} Privilege & role promotion governance
+                </li>
+                <li class="{% if user.can_access_admin_area %}perm-allowed{% else %}perm-denied{% endif %}">
+                    {% if user.can_access_admin_area %}✓{% else %}✗{% endif %} System-wide configuration
+                </li>
+                <li class="{% if user.can_access_admin_area %}perm-allowed{% else %}perm-denied{% endif %}">
+                    {% if user.can_access_admin_area %}✓{% else %}✗{% endif %} Django administration console
+                </li>
+            </ul>
+            <div class="card-action">
+                <a href="{% url 'authentication:admin_area' %}" class="btn {% if user.can_access_admin_area %}btn-primary{% else %}btn-secondary{% endif %} btn-sm">
+                    Access Admin Area
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

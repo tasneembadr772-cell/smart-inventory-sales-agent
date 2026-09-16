@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}403 Forbidden - Access Denied{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card" style="max-width: 580px; text-align: center;">
+        <div class="card-icon" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; width: 64px; height: 64px; margin: 0 auto 1.5rem; font-size: 2rem;">
+            ⛔
+        </div>
+
+        <div class="auth-badge" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.3);">
+            HTTP 403 - Forbidden
+        </div>
+
+        <h1 class="auth-title" style="margin-top: 1rem;">Access Denied</h1>
+        <p class="auth-subtitle">
+            {% if exception %}
+                {{ exception }}
+            {% else %}
+                You do not have the required role privileges to access this protected area.
+            {% endif %}
+        </p>
+
+        <div class="rbac-details" style="text-align: left; background: var(--bg-surface); padding: 1.25rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); margin: 2rem 0;">
+            <p><strong>Privilege Protection:</strong> Active RBAC Defense</p>
+            {% if user.is_authenticated %}
+                <p><strong>Your Account:</strong> {{ user.username }}</p>
+                <p><strong>Your Current Role:</strong> <span class="role-badge role-badge-{{ user.role|lower }}">{{ user.get_role_display }}</span></p>
+                <p><strong>Status:</strong> Horizontal/Vertical privilege escalation prevented by server-side verification.</p>
+            {% else %}
+                <p><strong>Status:</strong> Authentication session required.</p>
+            {% endif %}
+        </div>
+
+        <div class="form-actions" style="justify-content: center;">
+            {% if user.is_authenticated %}
+                <a href="{% url 'authentication:dashboard' %}" class="btn btn-primary">
+                    Return to Safe Dashboard
+                </a>
+                <a href="{% url 'authentication:profile' %}" class="btn btn-secondary">
+                    View My Profile
+                </a>
+            {% else %}
+                <a href="{% url 'authentication:login' %}" class="btn btn-primary">
+                    Log In
+                </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
