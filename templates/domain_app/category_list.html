@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Category Management | Inventory Management{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Header -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <span class="current">Categories</span>
+            </div>
+            <h1 class="page-title">Category Management</h1>
+            <p class="page-subtitle">Organize products into hierarchical taxonomies with relational integrity constraints.</p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">
+                &larr; Products Catalog
+            </a>
+            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+            <a href="{% url 'domain_app:category_create' %}" class="btn btn-primary" id="btnCreateCategory">
+                <span class="btn-icon">➕</span> Add Category
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Search / Filter Bar -->
+    <div class="filter-toolbar card">
+        <form method="get" action="{% url 'domain_app:category_list' %}" class="filter-form">
+            <div class="filter-group search-group">
+                <span class="search-icon">🔍</span>
+                <input type="text" name="search" value="{{ search_query }}" placeholder="Search categories by name or description..." class="search-input">
+            </div>
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary btn-sm">Search</button>
+                {% if search_query %}
+                <a href="{% url 'domain_app:category_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+
+    <!-- Category Table -->
+    <div class="table-container card">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Category Name & Slug</th>
+                    <th>Description</th>
+                    <th class="text-center">Assigned Products</th>
+                    <th class="text-center">Status</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for category in categories %}
+                <tr class="category-row">
+                    <td>
+                        <div class="category-name-group">
+                            <span class="category-name-text font-bold">{{ category.name }}</span>
+                            <span class="category-slug-badge font-mono text-muted">/{{ category.slug }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <p class="category-desc-text">
+                            {{ category.description|default:"No description provided."|truncatechars:80 }}
+                        </p>
+                    </td>
+                    <td class="text-center">
+                        <a href="{% url 'domain_app:product_list' %}?category={{ category.id }}" class="badge badge-info" title="View products in this category">
+                            {{ category.total_products }} product{{ category.total_products|pluralize }}
+                        </a>
+                    </td>
+                    <td class="text-center">
+                        {% if category.is_active %}
+                            <span class="status-indicator active">Active</span>
+                        {% else %}
+                            <span class="status-indicator inactive">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right actions-cell">
+                        <div class="row-actions">
+                            <a href="{% url 'domain_app:product_list' %}?category={{ category.id }}" class="action-btn view-btn" title="View Products">
+                                📦
+                            </a>
+                            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                            <a href="{% url 'domain_app:category_update' category.pk %}" class="action-btn edit-btn" title="Edit Category">
+                                ✏️
+                            </a>
+                            {% endif %}
+                            {% if user.role == 'ADMIN' or user.is_superuser %}
+                            <a href="{% url 'domain_app:category_delete' category.pk %}" class="action-btn delete-btn" title="Delete Category">
+                                🗑️
+                            </a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr class="empty-row">
+                    <td colspan="5" class="empty-state">
+                        <div class="empty-state-content">
+                            <span class="empty-icon">📁</span>
+                            <h3>No Categories Found</h3>
+                            <p>Get started by creating your first product category.</p>
+                            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                            <a href="{% url 'domain_app:category_create' %}" class="btn btn-primary btn-sm">Create New Category</a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,161 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ title }} | Inventory Management{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Breadcrumb & Header -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:product_list' %}">Products</a>
+                <span class="sep">/</span>
+                <span class="current">{% if is_edit %}Edit #{{ product.id }}{% else %}New Product{% endif %}</span>
+            </div>
+            <h1 class="page-title">{{ title }}</h1>
+            <p class="page-subtitle">{% if is_edit %}Update inventory parameters and pricing for this SKU.{% else %}Register a new physical or digital product SKU into the system catalog.{% endif %}</p>
+        </div>
+        <div class="header-actions">
+            {% if is_edit %}
+            <a href="{% url 'domain_app:product_detail' product.pk %}" class="btn btn-secondary">
+                Cancel
+            </a>
+            {% else %}
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">
+                Cancel
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Form Container -->
+    <div class="form-container-card card">
+        <form method="post" class="standard-form" novalidate>
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+            <div class="alert alert-error">
+                <span class="alert-icon">⚠️</span>
+                <div class="alert-content">
+                    {% for error in form.non_field_errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="form-grid">
+                <!-- Product Name -->
+                <div class="form-group col-span-2">
+                    <label for="{{ form.name.id_for_label }}" class="form-label">
+                        Product Name <span class="required-star">*</span>
+                    </label>
+                    {{ form.name }}
+                    {% if form.name.errors %}
+                        <span class="field-error">{{ form.name.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Commercial display name used in invoices and catalog displays.</span>
+                </div>
+
+                <!-- SKU -->
+                <div class="form-group">
+                    <label for="{{ form.sku.id_for_label }}" class="form-label">
+                        SKU (Stock Keeping Unit) <span class="required-star">*</span>
+                    </label>
+                    {{ form.sku }}
+                    {% if form.sku.errors %}
+                        <span class="field-error">{{ form.sku.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Unique barcode or SKU identifier (auto-uppercased).</span>
+                </div>
+
+                <!-- Category -->
+                <div class="form-group">
+                    <label for="{{ form.category.id_for_label }}" class="form-label">
+                        Category Classification <span class="required-star">*</span>
+                    </label>
+                    {{ form.category }}
+                    {% if form.category.errors %}
+                        <span class="field-error">{{ form.category.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Select the taxonomy group for this product.</span>
+                </div>
+
+                <!-- Price -->
+                <div class="form-group">
+                    <label for="{{ form.price.id_for_label }}" class="form-label">
+                        Unit Price ($) <span class="required-star">*</span>
+                    </label>
+                    {{ form.price }}
+                    {% if form.price.errors %}
+                        <span class="field-error">{{ form.price.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Must be greater than or equal to 0.00.</span>
+                </div>
+
+                <!-- Stock Quantity -->
+                <div class="form-group">
+                    <label for="{{ form.stock_quantity.id_for_label }}" class="form-label">
+                        Initial Stock Quantity <span class="required-star">*</span>
+                    </label>
+                    {{ form.stock_quantity }}
+                    {% if form.stock_quantity.errors %}
+                        <span class="field-error">{{ form.stock_quantity.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Current count of physical units in warehouse/store.</span>
+                </div>
+
+                <!-- Reorder Level -->
+                <div class="form-group">
+                    <label for="{{ form.reorder_level.id_for_label }}" class="form-label">
+                        Reorder Threshold Level <span class="required-star">*</span>
+                    </label>
+                    {{ form.reorder_level }}
+                    {% if form.reorder_level.errors %}
+                        <span class="field-error">{{ form.reorder_level.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Alert is triggered when stock reaches or falls below this number.</span>
+                </div>
+
+                <!-- Active Status Checkbox -->
+                <div class="form-group checkbox-group">
+                    <div class="checkbox-wrapper">
+                        {{ form.is_active }}
+                        <label for="{{ form.is_active.id_for_label }}" class="checkbox-label">
+                            Active in Catalog
+                        </label>
+                    </div>
+                    <span class="field-help">If unchecked, standard users will not see this product in active catalog.</span>
+                </div>
+
+                <!-- Description -->
+                <div class="form-group col-span-2">
+                    <label for="{{ form.description.id_for_label }}" class="form-label">
+                        Product Description & Specifications
+                    </label>
+                    {{ form.description }}
+                    {% if form.description.errors %}
+                        <span class="field-error">{{ form.description.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Optional detailed notes, technical specifications, or physical dimensions.</span>
+                </div>
+            </div>
+
+            <!-- Form Submit Buttons -->
+            <div class="form-actions">
+                {% if is_edit %}
+                <a href="{% url 'domain_app:product_detail' product.pk %}" class="btn btn-ghost">Cancel</a>
+                {% else %}
+                <a href="{% url 'domain_app:product_list' %}" class="btn btn-ghost">Cancel</a>
+                {% endif %}
+                <button type="submit" class="btn btn-primary">
+                    {% if is_edit %}Save Changes{% else %}Create Product{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
