@@ -12,7 +12,7 @@ from django.db.models import QuerySet, Q, F, Count, Sum, Value, DecimalField
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 
-from .models import Category, Product, Supplier
+from .models import Category, Product, Supplier, InventoryTransaction
 
 
 def get_products_queryset(
@@ -210,11 +210,175 @@ def get_inventory_kpis() -> Dict[str, Any]:
             filter=Q(stock_quantity__gt=0, stock_quantity__lte=F('reorder_level'))
         ),
         out_of_stock_count=Count('id', filter=Q(stock_quantity=0)),
+        total_reorder_needed=Count('id', filter=Q(stock_quantity__lte=F('reorder_level'))),
         total_units=Coalesce(Sum('stock_quantity'), 0),
         total_valuation=Coalesce(
             Sum(F('stock_quantity') * F('price'), output_field=DecimalField()),
             Value(Decimal('0.00'), output_field=DecimalField())
         ),
     )
+    # Add alias total_stock for total_units
+    aggregates['total_stock'] = aggregates['total_units']
     return aggregates
+
+
+# ==============================================================================
+# Low Stock & Inventory Selectors (Reusable by AI Agent)
+# ==============================================================================
+
+def get_low_stock_products(
+    user=None,
+    search: Optional[str] = None,
+    category_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    include_out_of_stock: bool = True,
+) -> QuerySet[Product]:
+    """
+    Retrieves inventory products where current stock is at or below the reorder level.
+    
+    Business Rule:
+    A product is low-stock when current quantity <= reorder level.
+    
+    Reusable by the AI Agent for inventory monitoring, low-stock notifications,
+    and replenishment planning.
+    """
+    qs = Product.objects.select_related('category', 'supplier')
+
+    # RBAC visibility
+    is_privileged = False
+    if user and user.is_authenticated:
+        is_privileged = user.is_superuser or user.role in ('ADMIN', 'MANAGER')
+
+    if not is_privileged:
+        qs = qs.filter(is_active=True)
+
+    # Core low-stock business rule: current quantity <= reorder level
+    if include_out_of_stock:
+        qs = qs.filter(stock_quantity__lte=F('reorder_level'))
+    else:
+        qs = qs.filter(stock_quantity__gt=0, stock_quantity__lte=F('reorder_level'))
+
+    # Filters
+    if search:
+        term = search.strip()
+        if term:
+            qs = qs.filter(
+                Q(name__icontains=term) |
+                Q(sku__icontains=term) |
+                Q(description__icontains=term)
+            )
+
+    if category_id:
+        try:
+            qs = qs.filter(category_id=int(category_id))
+        except (ValueError, TypeError):
+            pass
+
+    if supplier_id:
+        try:
+            qs = qs.filter(supplier_id=int(supplier_id))
+        except (ValueError, TypeError):
+            pass
+
+    return qs.order_by('stock_quantity', 'name')
+
+
+def get_out_of_stock_products(
+    user=None,
+    category_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+) -> QuerySet[Product]:
+    """Retrieves products with zero physical units in stock."""
+    return get_low_stock_products(
+        user=user,
+        category_id=category_id,
+        supplier_id=supplier_id,
+        include_out_of_stock=True
+    ).filter(stock_quantity=0)
+
+
+def get_low_stock_report(
+    user=None,
+    category_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    include_out_of_stock: bool = True,
+) -> list[Dict[str, Any]]:
+    """
+    Returns structured, serializable data representing low-stock products.
+    Specifically crafted for direct consumption by the AI Agent and external integrations.
+    Calculates replenishment deficits against reorder levels and target levels.
+    """
+    qs = get_low_stock_products(
+        user=user,
+        category_id=category_id,
+        supplier_id=supplier_id,
+        include_out_of_stock=include_out_of_stock,
+    )
+
+    report = []
+    for p in qs:
+        deficit_to_reorder = max(0, p.reorder_level - p.stock_quantity)
+        target = p.target_stock_level if p.target_stock_level is not None else p.reorder_level * 2
+        deficit_to_target = max(0, target - p.stock_quantity)
+        urgency = 'CRITICAL' if p.stock_quantity == 0 else 'HIGH'
+
+        report.append({
+            'product_id': p.id,
+            'name': p.name,
+            'sku': p.sku,
+            'category_id': p.category_id,
+            'category_name': p.category.name,
+            'supplier_id': p.supplier_id,
+            'supplier_name': p.supplier.name if p.supplier else None,
+            'supplier_email': p.supplier.email if p.supplier else None,
+            'current_stock': p.stock_quantity,
+            'reorder_level': p.reorder_level,
+            'target_stock_level': p.target_stock_level,
+            'deficit_to_reorder': deficit_to_reorder,
+            'deficit_to_target': deficit_to_target,
+            'suggested_reorder_qty': deficit_to_target if deficit_to_target > 0 else (deficit_to_reorder + 10),
+            'unit_price': float(p.price),
+            'urgency': urgency,
+            'is_active': p.is_active,
+        })
+    return report
+
+
+def get_inventory_transactions_queryset(
+    user=None,
+    product_id: Optional[int] = None,
+    transaction_type: Optional[str] = None,
+    search: Optional[str] = None,
+) -> QuerySet[InventoryTransaction]:
+    """
+    Retrieves filtered and optimized QuerySet of inventory stock movements.
+    Prevents N+1 database queries through `select_related('product', 'created_by', 'product__category')`.
+    """
+    qs = InventoryTransaction.objects.select_related(
+        'product', 'created_by', 'product__category'
+    ).all()
+
+    if product_id:
+        try:
+            qs = qs.filter(product_id=int(product_id))
+        except (ValueError, TypeError):
+            pass
+
+    if transaction_type:
+        tx_clean = transaction_type.strip().upper()
+        if tx_clean in InventoryTransaction.TransactionType.values:
+            qs = qs.filter(transaction_type=tx_clean)
+
+    if search:
+        term = search.strip()
+        if term:
+            qs = qs.filter(
+                Q(product__name__icontains=term) |
+                Q(product__sku__icontains=term) |
+                Q(reference__icontains=term) |
+                Q(notes__icontains=term)
+            )
+
+    return qs.order_by('-created_at')
+
 

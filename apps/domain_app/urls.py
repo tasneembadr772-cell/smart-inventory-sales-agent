@@ -9,6 +9,13 @@ from . import views
 app_name = 'domain_app'
 
 urlpatterns = [
+    # Inventory & Low-Stock Management Endpoints
+    path('inventory/', views.inventory_dashboard, name='inventory_dashboard'),
+    path('inventory/low-stock/', views.low_stock_list, name='low_stock_list'),
+    path('inventory/transactions/', views.inventory_transactions_list, name='inventory_transactions'),
+    path('products/<int:pk>/stock-adjustment/', views.stock_adjustment, name='product_stock_adjustment'),
+    path('api/inventory/low-stock/', views.api_low_stock, name='api_low_stock'),
+
     # Product Endpoints
     path('products/', views.product_list, name='product_list'),
     path('products/create/', views.product_create, name='product_create'),

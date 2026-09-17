@@ -131,14 +131,20 @@ def profile_view(request):
 def dashboard_view(request):
     """
     Central authenticated dashboard.
-    Visualizes user permissions and RBAC role boundaries.
+    Visualizes user permissions, RBAC role boundaries, and key inventory metrics.
     """
+    from apps.domain_app import selectors as domain_selectors
+
     user = request.user
     role_meta = get_role_badge_info(user.role)
+    kpis = domain_selectors.get_inventory_kpis()
+    low_stock_items = domain_selectors.get_low_stock_products(user=request.user, include_out_of_stock=True)[:5]
 
     return render(request, 'authentication/dashboard.html', {
         'user': user,
         'role_meta': role_meta,
+        'kpis': kpis,
+        'low_stock_items': low_stock_items,
     })
 
 

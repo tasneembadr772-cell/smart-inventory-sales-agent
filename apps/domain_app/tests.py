@@ -16,8 +16,9 @@ from django.db import IntegrityError, models
 from django.test import TestCase, Client
 from django.urls import reverse
 
-from .models import Category, Product, Supplier
-from .forms import SupplierForm
+from .models import Category, Product, Supplier, InventoryTransaction
+from .forms import SupplierForm, StockAdjustmentForm
+from .services import InsufficientStockError, InvalidStockAdjustmentError
 from . import selectors, services
 
 User = get_user_model()
@@ -70,7 +71,7 @@ class CategoryAndProductModelTestCase(TestCase):
         self.assertFalse(p_low.is_out_of_stock)
         self.assertEqual(p_low.stock_status, 'low_stock')
 
-        # Out of stock test
+        # Out of stock test (satisfies current quantity <= reorder_level as well as out_of_stock)
         p_out = Product.objects.create(
             name='Out of Stock Headset',
             sku='HD-OUT-001',
@@ -79,7 +80,7 @@ class CategoryAndProductModelTestCase(TestCase):
             stock_quantity=0,
             reorder_level=5,
         )
-        self.assertFalse(p_out.is_low_stock)
+        self.assertTrue(p_out.is_low_stock)
         self.assertTrue(p_out.is_out_of_stock)
         self.assertEqual(p_out.stock_status, 'out_of_stock')
 
@@ -859,4 +860,498 @@ class SupplierRBACViewsTestCase(TestCase):
         response = self.client.post(reverse('domain_app:supplier_delete', args=[supp_to_delete.pk]))
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Supplier.objects.filter(pk=supp_to_delete.pk).exists())
+
+
+# ==============================================================================
+# Inventory & Low-Stock Module Test Suite
+# ==============================================================================
+
+class InventoryModelAndTrackingTestCase(TestCase):
+    """Verifies target stock level field, InventoryTransaction model, and constraints."""
+
+    def setUp(self):
+        self.category = Category.objects.create(name='Storage Devices')
+        self.supplier = Supplier.objects.create(name='Western Digital Corp', email='orders@wdc.com', phone='555-1234')
+
+    def test_product_target_stock_level_attribute_and_validation(self):
+        product = Product.objects.create(
+            name='1TB NVMe SSD',
+            sku='SSD-NVME-1TB',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('89.99'),
+            stock_quantity=15,
+            reorder_level=5,
+            target_stock_level=50,
+        )
+        self.assertEqual(product.target_stock_level, 50)
+
+        # Validation rejects negative target stock level
+        product.target_stock_level = -5
+        with self.assertRaises(ValidationError):
+            product.full_clean()
+
+    def test_inventory_transaction_creation_and_string_representation(self):
+        product = Product.objects.create(
+            name='2TB External HDD',
+            sku='HDD-EXT-2TB',
+            category=self.category,
+            price=Decimal('69.99'),
+            stock_quantity=20,
+        )
+        tx = InventoryTransaction.objects.create(
+            product=product,
+            transaction_type=InventoryTransaction.TransactionType.ADD,
+            quantity=10,
+            previous_stock=10,
+            new_stock=20,
+            reference='PO-2026-001',
+            notes='Shipment received.',
+        )
+        self.assertEqual(tx.transaction_type, 'ADD')
+        self.assertEqual(tx.quantity, 10)
+        self.assertEqual(tx.previous_stock, 10)
+        self.assertEqual(tx.new_stock, 20)
+        self.assertIn('Stock Added: 10 units for HDD-EXT-2TB', str(tx))
+
+    def test_inventory_transaction_negative_constraints(self):
+        product = Product.objects.create(
+            name='Flash Drive 64GB',
+            sku='USB-64GB-01',
+            category=self.category,
+            price=Decimal('9.99'),
+            stock_quantity=5,
+        )
+        tx_valid = InventoryTransaction(
+            product=product,
+            transaction_type='ADD',
+            quantity=0,
+            previous_stock=5,
+            new_stock=5,
+        )
+        tx_valid.clean()
+
+        tx_neg = InventoryTransaction(
+            product=product,
+            transaction_type='REMOVE',
+            quantity=-1,
+            previous_stock=5,
+            new_stock=4,
+        )
+        with self.assertRaises(ValidationError):
+            tx_neg.full_clean()
+
+
+class InventoryServiceStockMovementsTestCase(TestCase):
+    """Verifies atomic stock movements: ADD, REMOVE, ADJUSTMENT, and business rules."""
+
+    def setUp(self):
+        self.category = Category.objects.create(name='Monitors & Screens')
+        self.user = User.objects.create_user(
+            username='inv_manager',
+            email='inv_mgr@test.com',
+            password='password123',
+            role=User.Role.MANAGER,
+        )
+        self.product = services.create_product(
+            name='27-inch 4K IPS Monitor',
+            sku='MON-4K-27',
+            category=self.category,
+            price=Decimal('349.99'),
+            stock_quantity=20,
+            reorder_level=5,
+            target_stock_level=40,
+            created_by=self.user,
+        )
+
+    def test_initial_stock_transaction_recorded(self):
+        # Because product was created with stock_quantity=20, an initial transaction must exist
+        tx = InventoryTransaction.objects.filter(product=self.product).first()
+        self.assertIsNotNone(tx)
+        self.assertEqual(tx.transaction_type, 'ADD')
+        self.assertEqual(tx.quantity, 20)
+        self.assertEqual(tx.previous_stock, 0)
+        self.assertEqual(tx.new_stock, 20)
+        self.assertEqual(tx.reference, 'INITIAL-STOCK')
+
+    def test_add_stock_success(self):
+        tx = services.add_stock(
+            product=self.product,
+            quantity=15,
+            user=self.user,
+            reference='PO-REPLENISH-101',
+            notes='Restocked from central distributor.',
+        )
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 35)
+        self.assertEqual(tx.transaction_type, 'ADD')
+        self.assertEqual(tx.quantity, 15)
+        self.assertEqual(tx.previous_stock, 20)
+        self.assertEqual(tx.new_stock, 35)
+        self.assertEqual(tx.created_by, self.user)
+
+    def test_add_stock_rejects_non_positive_quantity(self):
+        with self.assertRaises(ValidationError):
+            services.add_stock(product=self.product, quantity=0)
+
+        with self.assertRaises(ValidationError):
+            services.add_stock(product=self.product, quantity=-5)
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 20)
+
+    def test_remove_stock_success(self):
+        tx = services.remove_stock(
+            product=self.product,
+            quantity=8,
+            user=self.user,
+            reference='INV-DISPATCH-55',
+            notes='Customer fulfillment.',
+        )
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 12)
+        self.assertEqual(tx.transaction_type, 'REMOVE')
+        self.assertEqual(tx.quantity, 8)
+        self.assertEqual(tx.previous_stock, 20)
+        self.assertEqual(tx.new_stock, 12)
+
+    def test_remove_stock_insufficient_stock_prevents_negative(self):
+        # Product has 20 units; attempting to remove 25 must fail
+        with self.assertRaises(InsufficientStockError) as ctx:
+            services.remove_stock(
+                product=self.product,
+                quantity=25,
+                user=self.user,
+                reference='ORDER-TOO-BIG',
+            )
+
+        self.assertIn("Insufficient stock", str(ctx.exception))
+        # Verify atomic rollback: product stock remains unchanged
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 20)
+        # Verify no failed transaction recorded
+        self.assertFalse(InventoryTransaction.objects.filter(reference='ORDER-TOO-BIG').exists())
+
+    def test_adjust_stock_success(self):
+        tx = services.adjust_stock(
+            product=self.product,
+            new_quantity=18,
+            user=self.user,
+            reference='AUDIT-Q3-2026',
+            notes='Discrepancy resolved during cycle count.',
+        )
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 18)
+        self.assertEqual(tx.transaction_type, 'ADJUSTMENT')
+        self.assertEqual(tx.previous_stock, 20)
+        self.assertEqual(tx.new_stock, 18)
+        self.assertEqual(tx.quantity, 2)
+
+    def test_adjust_stock_rejects_negative_new_stock(self):
+        with self.assertRaises(InvalidStockAdjustmentError):
+            services.adjust_stock(
+                product=self.product,
+                new_quantity=-10,
+                user=self.user,
+            )
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 20)
+
+    def test_database_check_constraint_prevents_negative_stock(self):
+        # Directly attempting to bypass services and save negative stock fails at DB level
+        self.product.stock_quantity = -5
+        with self.assertRaises((IntegrityError, ValidationError)):
+            self.product.save()
+
+
+class LowStockDetectionAndSelectorTestCase(TestCase):
+    """Verifies low-stock detection business rule and reusable AI Agent selectors."""
+
+    def setUp(self):
+        self.category = Category.objects.create(name='Networking & Cables')
+        self.supplier = Supplier.objects.create(
+            name='Cisco Systems Distribution',
+            email='procure@cisco-dist.com',
+            phone='555-8888',
+        )
+
+        # In-stock product (15 > 5)
+        self.p_in = Product.objects.create(
+            name='Gigabit Ethernet Cable 5m',
+            sku='NET-CAT6-5M',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('12.99'),
+            stock_quantity=15,
+            reorder_level=5,
+            target_stock_level=30,
+        )
+
+        # Low-stock product: current quantity == reorder_level (5 == 5)
+        self.p_exact = Product.objects.create(
+            name='Managed Switch 8-Port',
+            sku='NET-SW-8P',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('89.99'),
+            stock_quantity=5,
+            reorder_level=5,
+            target_stock_level=20,
+        )
+
+        # Low-stock product: current quantity < reorder_level (2 < 5)
+        self.p_below = Product.objects.create(
+            name='WiFi 6 Router',
+            sku='NET-RT-AX',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('129.99'),
+            stock_quantity=2,
+            reorder_level=5,
+            target_stock_level=15,
+        )
+
+        # Out-of-stock product: current quantity == 0 (0 <= 5)
+        self.p_out = Product.objects.create(
+            name='Fiber Optic Patch 1m',
+            sku='NET-FO-1M',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('24.99'),
+            stock_quantity=0,
+            reorder_level=5,
+            target_stock_level=25,
+        )
+
+    def test_low_stock_detection_business_rules(self):
+        # 1. Product with stock > reorder_level is NOT low stock
+        self.assertFalse(self.p_in.is_low_stock)
+        self.assertEqual(self.p_in.stock_status, 'in_stock')
+
+        # 2. Product with stock == reorder_level IS low stock
+        self.assertTrue(self.p_exact.is_low_stock)
+        self.assertEqual(self.p_exact.stock_status, 'low_stock')
+
+        # 3. Product with stock < reorder_level IS low stock
+        self.assertTrue(self.p_below.is_low_stock)
+        self.assertEqual(self.p_below.stock_status, 'low_stock')
+
+        # 4. Product with stock == 0 IS low stock and out of stock
+        self.assertTrue(self.p_out.is_low_stock)
+        self.assertTrue(self.p_out.is_out_of_stock)
+        self.assertEqual(self.p_out.stock_status, 'out_of_stock')
+
+    def test_get_low_stock_products_selector(self):
+        # Default (include_out_of_stock=True): returns exact, below, and out
+        low_stock_qs = selectors.get_low_stock_products(include_out_of_stock=True)
+        skus = list(low_stock_qs.values_list('sku', flat=True))
+        self.assertIn('NET-SW-8P', skus)
+        self.assertIn('NET-RT-AX', skus)
+        self.assertIn('NET-FO-1M', skus)
+        self.assertNotIn('NET-CAT6-5M', skus)
+        self.assertEqual(len(skus), 3)
+
+        # Excluding out-of-stock
+        strictly_low = selectors.get_low_stock_products(include_out_of_stock=False)
+        strictly_skus = list(strictly_low.values_list('sku', flat=True))
+        self.assertIn('NET-SW-8P', strictly_skus)
+        self.assertIn('NET-RT-AX', strictly_skus)
+        self.assertNotIn('NET-FO-1M', strictly_skus)
+        self.assertEqual(len(strictly_skus), 2)
+
+    def test_get_out_of_stock_products_selector(self):
+        out_qs = selectors.get_out_of_stock_products()
+        self.assertEqual(out_qs.count(), 1)
+        self.assertEqual(out_qs.first().sku, 'NET-FO-1M')
+
+    def test_get_low_stock_report_for_ai_agent(self):
+        report = selectors.get_low_stock_report()
+        self.assertEqual(len(report), 3)
+
+        # Verify structured dictionary schema for AI Agent
+        item_out = next(item for item in report if item['sku'] == 'NET-FO-1M')
+        self.assertEqual(item_out['current_stock'], 0)
+        self.assertEqual(item_out['reorder_level'], 5)
+        self.assertEqual(item_out['target_stock_level'], 25)
+        self.assertEqual(item_out['deficit_to_reorder'], 5)
+        self.assertEqual(item_out['deficit_to_target'], 25)
+        self.assertEqual(item_out['urgency'], 'CRITICAL')
+        self.assertEqual(item_out['supplier_name'], 'Cisco Systems Distribution')
+        self.assertEqual(item_out['supplier_email'], 'procure@cisco-dist.com')
+
+        item_below = next(item for item in report if item['sku'] == 'NET-RT-AX')
+        self.assertEqual(item_below['current_stock'], 2)
+        self.assertEqual(item_below['deficit_to_reorder'], 3)
+        self.assertEqual(item_below['deficit_to_target'], 13)
+        self.assertEqual(item_below['urgency'], 'HIGH')
+
+    def test_get_inventory_kpis(self):
+        kpis = selectors.get_inventory_kpis()
+        self.assertEqual(kpis['total_products'], 4)
+        self.assertEqual(kpis['total_units'], 22) # 15 + 5 + 2 + 0
+        self.assertEqual(kpis['out_of_stock_count'], 1) # p_out
+        self.assertEqual(kpis['low_stock_count'], 2) # p_exact, p_below
+        self.assertEqual(kpis['total_reorder_needed'], 3) # p_exact, p_below, p_out
+
+
+class InventoryViewsAndRBACTestCase(TestCase):
+    """Verifies HTTP responses, RBAC protection, and AJAX stock operations."""
+
+    def setUp(self):
+        self.client = Client()
+        self.category = Category.objects.create(name='Printers & Toner')
+        self.product = Product.objects.create(
+            name='LaserJet Pro Multifunction',
+            sku='PRN-LJ-100',
+            category=self.category,
+            price=Decimal('299.99'),
+            stock_quantity=8,
+            reorder_level=5,
+            target_stock_level=20,
+            is_active=True,
+        )
+
+        self.standard_user = User.objects.create_user(
+            username='user_regular',
+            email='user@test.com',
+            password='Password123!',
+            role=User.Role.STANDARD,
+        )
+        self.manager = User.objects.create_user(
+            username='mgr_stock',
+            email='manager@test.com',
+            password='Password123!',
+            role=User.Role.MANAGER,
+        )
+        self.admin = User.objects.create_user(
+            username='admin_boss',
+            email='admin@test.com',
+            password='Password123!',
+            role=User.Role.ADMIN,
+        )
+
+    def test_anonymous_redirected_to_login(self):
+        endpoints = [
+            reverse('domain_app:inventory_dashboard'),
+            reverse('domain_app:low_stock_list'),
+            reverse('domain_app:inventory_transactions'),
+            reverse('domain_app:product_stock_adjustment', args=[self.product.pk]),
+            reverse('domain_app:api_low_stock'),
+        ]
+        for url in endpoints:
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 302, f"Failed for {url}")
+            self.assertIn('/auth/login/', response.url)
+
+    def test_standard_user_can_view_inventory_hubs(self):
+        self.client.force_login(self.standard_user)
+        # Dashboard view (200 OK)
+        res_dash = self.client.get(reverse('domain_app:inventory_dashboard'))
+        self.assertEqual(res_dash.status_code, 200)
+
+        # Low stock view (200 OK)
+        res_low = self.client.get(reverse('domain_app:low_stock_list'))
+        self.assertEqual(res_low.status_code, 200)
+
+        # Transactions ledger (200 OK)
+        res_tx = self.client.get(reverse('domain_app:inventory_transactions'))
+        self.assertEqual(res_tx.status_code, 200)
+
+        # JSON low stock API (200 OK)
+        res_api = self.client.get(reverse('domain_app:api_low_stock'))
+        self.assertEqual(res_api.status_code, 200)
+        data = res_api.json()
+        self.assertEqual(data['status'], 'success')
+        self.assertIn('kpis', data)
+
+    def test_standard_user_forbidden_from_stock_adjustment(self):
+        self.client.force_login(self.standard_user)
+        url = reverse('domain_app:product_stock_adjustment', args=[self.product.pk])
+        # GET should be forbidden
+        res_get = self.client.get(url)
+        self.assertEqual(res_get.status_code, 403)
+
+        # POST should be forbidden
+        res_post = self.client.post(url, {
+            'transaction_type': 'ADD',
+            'quantity': 10,
+        })
+        self.assertEqual(res_post.status_code, 403)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 8)
+
+    def test_manager_can_adjust_stock_form_post(self):
+        self.client.force_login(self.manager)
+        url = reverse('domain_app:product_stock_adjustment', args=[self.product.pk])
+        response = self.client.post(url, {
+            'transaction_type': 'ADD',
+            'quantity': 12,
+            'reference': 'RESTOCK-MGR-01',
+            'notes': 'Added by warehouse manager.',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 20)
+
+        # Verify transaction logged
+        tx = InventoryTransaction.objects.filter(reference='RESTOCK-MGR-01').first()
+        self.assertIsNotNone(tx)
+        self.assertEqual(tx.created_by, self.manager)
+
+    def test_manager_ajax_stock_adjustment_json_response(self):
+        self.client.force_login(self.manager)
+        url = reverse('domain_app:product_stock_adjustment', args=[self.product.pk])
+        response = self.client.post(
+            url,
+            data={
+                'transaction_type': 'REMOVE',
+                'quantity': 3,
+                'reference': 'INV-AJAX-01',
+                'notes': 'Dispatched.',
+            },
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['new_stock'], 5)
+        self.assertEqual(data['stock_status'], 'low_stock') # 5 <= reorder_level 5
+        self.assertTrue(data['is_low_stock'])
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 5)
+
+    def test_manager_ajax_stock_removal_insufficient_error(self):
+        self.client.force_login(self.manager)
+        url = reverse('domain_app:product_stock_adjustment', args=[self.product.pk])
+        response = self.client.post(
+            url,
+            data={
+                'transaction_type': 'REMOVE',
+                'quantity': 500, # product only has 8 units
+            },
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(response.status_code, 400)
+        data = response.json()
+        self.assertFalse(data['success'])
+        self.assertIn("Insufficient stock", data['message'])
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 8)
+
+    def test_admin_can_adjust_stock(self):
+        self.client.force_login(self.admin)
+        url = reverse('domain_app:product_stock_adjustment', args=[self.product.pk])
+        response = self.client.post(url, {
+            'transaction_type': 'ADJUSTMENT',
+            'quantity': 42,
+            'reference': 'ANNUAL-AUDIT',
+            'notes': 'Admin physical count alignment.',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_quantity, 42)
+
 

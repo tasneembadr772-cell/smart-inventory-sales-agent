@@ -35,7 +35,10 @@
                 &larr; Back to Catalog
             </a>
             {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
-            <a href="{% url 'domain_app:product_update' product.pk %}" class="btn btn-primary">
+            <button type="button" class="btn btn-primary btn-adjust-stock" data-product-id="{{ product.pk }}" data-product-name="{{ product.name }}" data-product-sku="{{ product.sku }}" data-stock="{{ product.stock_quantity }}" data-reorder="{{ product.reorder_level }}">
+                ⚡ Adjust Stock
+            </button>
+            <a href="{% url 'domain_app:product_update' product.pk %}" class="btn btn-secondary">
                 ✏️ Edit Product
             </a>
             {% endif %}
@@ -89,6 +92,16 @@
                     <span class="spec-value">{{ product.reorder_level }} units</span>
                 </div>
                 <div class="spec-item">
+                    <span class="spec-label">Target Stock Level</span>
+                    <span class="spec-value">
+                        {% if product.target_stock_level is not None %}
+                            {{ product.target_stock_level }} units
+                        {% else %}
+                            <span class="text-muted">Not specified</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="spec-item">
                     <span class="spec-label">Catalog Status</span>
                     <span class="spec-value">
                         {% if product.is_active %}
@@ -108,6 +121,74 @@
                 </div>
             </div>
             {% endif %}
+
+            <!-- Recent Stock Movements / Audit Ledger -->
+            <div class="detail-description-section" style="margin-top: 2rem;">
+                <div class="section-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                    <h3 class="subsection-title" style="margin: 0;">Recent Stock Movements & Audit Ledger</h3>
+                    <a href="{% url 'domain_app:inventory_transactions' %}?product_id={{ product.id }}" class="btn btn-secondary btn-sm">
+                        View All Logs &rarr;
+                    </a>
+                </div>
+                
+                <div class="table-container" style="background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Type</th>
+                                <th class="text-right">Units</th>
+                                <th class="text-center">Balance</th>
+                                <th>Reference</th>
+                                <th>User</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for tx in recent_transactions %}
+                            <tr>
+                                <td class="font-mono text-muted text-sm">{{ tx.created_at|date:"M d, Y H:i" }}</td>
+                                <td>
+                                    {% if tx.transaction_type == 'ADD' %}
+                                        <span class="badge badge-success">Stock Added</span>
+                                    {% elif tx.transaction_type == 'REMOVE' %}
+                                        <span class="badge badge-danger">Stock Removed</span>
+                                    {% else %}
+                                        <span class="badge badge-info">Adjustment</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right font-mono font-bold">
+                                    {% if tx.transaction_type == 'ADD' %}+{{ tx.quantity }}
+                                    {% elif tx.transaction_type == 'REMOVE' %}-{{ tx.quantity }}
+                                    {% else %}{{ tx.quantity }}{% endif %}
+                                </td>
+                                <td class="text-center font-mono text-sm">
+                                    {{ tx.previous_stock }} &rarr; <span class="font-bold">{{ tx.new_stock }}</span>
+                                </td>
+                                <td>
+                                    {% if tx.reference %}
+                                        <span class="product-sku-badge">{{ tx.reference }}</span>
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                    {% if tx.notes %}
+                                        <div class="text-muted text-sm">{{ tx.notes|truncatechars:40 }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="text-sm text-muted">
+                                    {{ tx.created_by.username|default:"System" }}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="6" class="empty-state" style="padding: 2rem; text-align: center;">
+                                    <p class="text-muted">No stock movements recorded yet for this product.</p>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- Sidebar Meta Card -->
@@ -117,6 +198,18 @@
                 <li class="meta-item">
                     <span class="meta-label">Primary Key ID</span>
                     <span class="meta-val font-mono">#{{ product.id }}</span>
+                </li>
+                <li class="meta-item">
+                    <span class="meta-label">Stock Status</span>
+                    <span class="meta-val">
+                        {% if product.stock_status == 'out_of_stock' %}
+                            <span class="badge badge-danger">Out of Stock</span>
+                        {% elif product.stock_status == 'low_stock' %}
+                            <span class="badge badge-warning">Low Stock (≤{{ product.reorder_level }})</span>
+                        {% else %}
+                            <span class="badge badge-success">In Stock</span>
+                        {% endif %}
+                    </span>
                 </li>
                 <li class="meta-item">
                     <span class="meta-label">Created At</span>
@@ -134,9 +227,82 @@
 
             <div class="protection-notice">
                 <span class="notice-icon">🛡️</span>
-                <p>This record is safeguarded by database-level check constraints on price, stock quantity, and unique SKU enforcement.</p>
+                <p>This record is safeguarded by database check constraints on price, stock quantity, and unique SKU enforcement.</p>
             </div>
         </div>
     </div>
 </div>
+
+<!-- Stock Adjustment Modal for Managers and Admins -->
+{% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+<div id="stockAdjustmentModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+        <div class="modal-header">
+            <div class="modal-title-group">
+                <span class="modal-icon">⚡</span>
+                <h3 class="modal-title">Adjust Inventory Stock</h3>
+            </div>
+            <button type="button" class="modal-close" id="btnCloseAdjustModal">&times;</button>
+        </div>
+        
+        <form id="stockAdjustmentForm" method="post" action="{% url 'domain_app:product_stock_adjustment' product.pk %}">
+            {% csrf_token %}
+            <div class="modal-body">
+                <div class="modal-product-summary">
+                    <div>
+                        <strong id="modalProductName">{{ product.name }}</strong>
+                        <span class="product-sku-badge" id="modalProductSku">{{ product.sku }}</span>
+                    </div>
+                    <div class="current-stock-callout">
+                        Current: <strong id="modalCurrentStock">{{ product.stock_quantity }}</strong> units
+                        (Reorder: {{ product.reorder_level }})
+                    </div>
+                </div>
+
+                <div id="modalFormErrors" class="alert alert-error" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label class="form-label" for="stockAdjustmentType">Operation Type <span class="required-star">*</span></label>
+                    <select name="transaction_type" id="stockAdjustmentType" class="form-select" required>
+                        <option value="ADD">➕ Stock Added (Replenishment / Restock)</option>
+                        <option value="REMOVE">➖ Stock Removed (Sale / Dispatch / Waste)</option>
+                        <option value="ADJUSTMENT">🔄 Stock Adjustment (Physical Count Audit)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label class="form-label" for="stockAdjustmentQuantity" id="qtyFieldLabel">
+                        Units to Add <span class="required-star">*</span>
+                    </label>
+                    <input type="number" name="quantity" id="stockAdjustmentQuantity" class="form-input" min="1" step="1" placeholder="Enter units (e.g. 20)" required>
+                    <span class="field-help" id="qtyFieldHelp">Units added to physical inventory.</span>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label class="form-label" for="stockAdjustmentReference">Reference Identifier</label>
+                    <input type="text" name="reference" id="stockAdjustmentReference" class="form-input" placeholder="e.g., PO-4921, INV-8201, AUDIT-2026">
+                    <span class="field-help">Optional PO, invoice, or audit tracking number.</span>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="stockAdjustmentNotes">Operational Notes</label>
+                    <textarea name="notes" id="stockAdjustmentNotes" class="form-textarea" rows="2" placeholder="Optional rationale for this stock change..."></textarea>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-ghost" id="btnCancelAdjustModal">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="btnSubmitStockAdjust">
+                    Confirm Stock Update
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/inventory.js' %}"></script>
+{% endblock %}
+

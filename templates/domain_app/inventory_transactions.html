@@ -1,0 +1,173 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Inventory Transactions & Audit Ledger | NexusERP{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Page Header & Action Controls -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:inventory_dashboard' %}">Inventory</a>
+                <span class="sep">/</span>
+                <span class="current">Audit Ledger</span>
+            </div>
+            <h1 class="page-title" style="display: flex; align-items: center; gap: 0.75rem;">
+                <span>📜</span> Inventory Stock Transactions Ledger
+            </h1>
+            <p class="page-subtitle">
+                Immutable audit trail recording every addition, removal, and physical adjustment across warehouse SKUs.
+            </p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:inventory_dashboard' %}" class="btn btn-secondary">
+                &larr; Inventory Hub
+            </a>
+            <a href="{% url 'domain_app:low_stock_list' %}" class="btn btn-warning">
+                ⚠️ Low Stock Alerts
+            </a>
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">
+                📦 Product Catalog
+            </a>
+        </div>
+    </div>
+
+    <!-- Filter & Search Toolbar -->
+    <div class="filter-toolbar card">
+        <form method="get" action="{% url 'domain_app:inventory_transactions' %}" class="filter-form" id="txFilterForm">
+            <div class="filter-group search-group">
+                <span class="search-icon">🔍</span>
+                {{ filter_form.search }}
+            </div>
+            
+            <div class="filter-group">
+                {{ filter_form.transaction_type }}
+            </div>
+
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary btn-sm">Filter Ledger</button>
+                <a href="{% url 'domain_app:inventory_transactions' %}" class="btn btn-ghost btn-sm">Reset</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Transaction Ledger Table -->
+    <div class="table-container card">
+        <table class="data-table" id="txTable">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Product & SKU</th>
+                    <th>Movement Type</th>
+                    <th class="text-right">Units Changed</th>
+                    <th class="text-center">Stock Snapshot</th>
+                    <th>Reference Tag</th>
+                    <th>Operational Notes</th>
+                    <th>Staff / Operator</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tx in transactions %}
+                <tr>
+                    <td class="font-mono text-muted text-sm">
+                        {{ tx.created_at|date:"M d, Y H:i:s" }}
+                    </td>
+                    <td>
+                        <div class="product-title-group">
+                            <a href="{% url 'domain_app:product_detail' tx.product.pk %}" class="product-name-link font-bold">
+                                {{ tx.product.name }}
+                            </a>
+                            <span class="product-sku-badge">{{ tx.product.sku }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        {% if tx.transaction_type == 'ADD' %}
+                            <span class="badge badge-success">➕ Stock Added</span>
+                        {% elif tx.transaction_type == 'REMOVE' %}
+                            <span class="badge badge-danger">➖ Stock Removed</span>
+                        {% else %}
+                            <span class="badge badge-info">🔄 Stock Adjustment</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right font-mono font-bold">
+                        {% if tx.transaction_type == 'ADD' %}
+                            <span class="text-success">+{{ tx.quantity }}</span>
+                        {% elif tx.transaction_type == 'REMOVE' %}
+                            <span class="text-danger">-{{ tx.quantity }}</span>
+                        {% else %}
+                            <span class="text-info">{{ tx.quantity }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center font-mono text-sm">
+                        {{ tx.previous_stock }} &rarr; <span class="font-bold">{{ tx.new_stock }}</span>
+                    </td>
+                    <td>
+                        {% if tx.reference %}
+                            <span class="product-sku-badge font-mono">{{ tx.reference }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if tx.notes %}
+                            <span class="text-sm">{{ tx.notes }}</span>
+                        {% else %}
+                            <span class="text-muted text-sm">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-sm">
+                        {% if tx.created_by %}
+                            <span class="role-badge role-badge-{{ tx.created_by.role|lower }}">
+                                {{ tx.created_by.username }}
+                            </span>
+                        {% else %}
+                            <span class="text-muted">System Automator</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr class="empty-row">
+                    <td colspan="8" class="empty-state" style="padding: 3rem; text-align: center;">
+                        <div class="empty-state-content">
+                            <span class="empty-icon" style="font-size: 3rem;">📜</span>
+                            <h3 style="margin-top: 1rem;">No Stock Transactions Found</h3>
+                            <p class="text-muted">No stock movements match your query filters.</p>
+                            <a href="{% url 'domain_app:inventory_transactions' %}" class="btn btn-secondary btn-sm" style="margin-top: 1rem;">Reset Filter</a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Pagination Bar -->
+        {% if page_obj.has_other_pages %}
+        <div class="pagination-bar">
+            <span class="pagination-info">
+                Showing {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }} transactions
+            </span>
+            <div class="pagination-controls">
+                {% if page_obj.has_previous %}
+                    <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&transaction_type={{ selected_type }}{% endif %}" class="page-link">&laquo; Prev</a>
+                {% endif %}
+
+                {% for num in page_obj.paginator.page_range %}
+                    {% if page_obj.number == num %}
+                        <span class="page-link active">{{ num }}</span>
+                    {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&transaction_type={{ selected_type }}{% endif %}" class="page-link">{{ num }}</a>
+                    {% endif %}
+                {% endfor %}
+
+                {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&transaction_type={{ selected_type }}{% endif %}" class="page-link">Next &raquo;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

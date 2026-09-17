@@ -1,0 +1,304 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Low-Stock Management & Alerts | NexusERP{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Page Header & Action Controls -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:inventory_dashboard' %}">Inventory</a>
+                <span class="sep">/</span>
+                <span class="current">Low Stock Alerts</span>
+            </div>
+            <h1 class="page-title" style="display: flex; align-items: center; gap: 0.75rem;">
+                <span style="color: #f59e0b;">⚠️</span> Low-Stock Replenishment Queue
+            </h1>
+            <p class="page-subtitle">
+                Business Rule: A product is considered low-stock when <code>current stock &le; reorder level</code>.
+                Review replenishment deficits and coordinate restocks with assigned suppliers.
+            </p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:inventory_dashboard' %}" class="btn btn-secondary">
+                &larr; Inventory Hub
+            </a>
+            <a href="{% url 'domain_app:inventory_transactions' %}" class="btn btn-secondary">
+                <span class="btn-icon">📜</span> Audit Ledger
+            </a>
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">
+                <span class="btn-icon">📦</span> Product Catalog
+            </a>
+        </div>
+    </div>
+
+    <!-- Inventory Health Summary Cards -->
+    <div class="kpi-grid">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon icon-yellow">⚠️</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Low-Stock SKUs (≤ Threshold)</span>
+                <span class="kpi-value">{{ kpis.total_reorder_needed|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card {% if kpis.out_of_stock_count > 0 %}kpi-danger{% endif %}">
+            <div class="kpi-icon icon-red">🚫</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Critically Out of Stock (0 units)</span>
+                <span class="kpi-value">{{ kpis.out_of_stock_count|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-blue">📦</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Catalog Total SKUs</span>
+                <span class="kpi-value">{{ kpis.total_products|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-purple">📊</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Total Units in System</span>
+                <span class="kpi-value">{{ kpis.total_units|default:0 }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter & Search Toolbar -->
+    <div class="filter-toolbar card">
+        <form method="get" action="{% url 'domain_app:low_stock_list' %}" class="filter-form" id="lowStockFilterForm">
+            <div class="filter-group search-group">
+                <span class="search-icon">🔍</span>
+                <input type="text" name="search" value="{{ search_query }}" class="search-input" id="lowStockSearchInput" placeholder="Search by Product Name, SKU, or Description...">
+            </div>
+            
+            <div class="filter-group">
+                <select name="category" class="filter-select" id="lowStockCatSelect">
+                    <option value="">All Categories</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat.id }}" {% if selected_category == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <select name="supplier" class="filter-select" id="lowStockSuppSelect">
+                    <option value="">All Suppliers</option>
+                    {% for supp in suppliers %}
+                    <option value="{{ supp.id }}" {% if selected_supplier == supp.id|stringformat:"s" %}selected{% endif %}>{{ supp.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
+                <a href="{% url 'domain_app:low_stock_list' %}" class="btn btn-ghost btn-sm">Reset</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Low-Stock Replenishment Table -->
+    <div class="table-container card">
+        <table class="data-table" id="lowStockTable">
+            <thead>
+                <tr>
+                    <th>Product & SKU</th>
+                    <th>Category</th>
+                    <th class="text-center">Current Stock</th>
+                    <th class="text-center">Reorder Threshold</th>
+                    <th class="text-center">Target Level</th>
+                    <th class="text-center">Health & Urgency</th>
+                    <th>Supplier / Contact</th>
+                    {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                    <th class="text-right">Action</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in low_stock_products %}
+                <tr class="product-row" id="product-row-{{ product.pk }}" data-product-id="{{ product.pk }}" data-name="{{ product.name|lower }}" data-sku="{{ product.sku|lower }}">
+                    <td class="product-identity">
+                        <div class="product-title-group">
+                            <a href="{% url 'domain_app:product_detail' product.pk %}" class="product-name-link font-bold">
+                                {{ product.name }}
+                            </a>
+                            <span class="product-sku-badge">{{ product.sku }}</span>
+                        </div>
+                        {% if product.description %}
+                        <p class="product-desc-excerpt">{{ product.description|truncatechars:50 }}</p>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="category-pill">{{ product.category.name }}</span>
+                    </td>
+                    <td class="text-center">
+                        <span class="stock-qty-display font-bold {% if product.stock_quantity == 0 %}text-danger{% else %}text-warning{% endif %}" style="font-size: 1.15rem;">
+                            {{ product.stock_quantity }}
+                        </span>
+                    </td>
+                    <td class="text-center font-mono font-bold text-muted">
+                        {{ product.reorder_level }}
+                    </td>
+                    <td class="text-center font-mono text-muted">
+                        {% if product.target_stock_level %}
+                            {{ product.target_stock_level }}
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        {% if product.stock_quantity == 0 %}
+                            <span class="badge badge-danger">CRITICAL (0 units)</span>
+                        {% else %}
+                            <span class="badge badge-warning">LOW STOCK (≤{{ product.reorder_level }})</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if product.supplier %}
+                            <div class="supplier-info">
+                                <a href="{% url 'domain_app:supplier_detail' product.supplier.pk %}" class="font-bold">
+                                    🏢 {{ product.supplier.name }}
+                                </a>
+                                {% if product.supplier.email %}
+                                <div class="text-sm text-muted">✉️ {{ product.supplier.email }}</div>
+                                {% endif %}
+                                {% if product.supplier.phone %}
+                                <div class="text-sm text-muted">📞 {{ product.supplier.phone }}</div>
+                                {% endif %}
+                            </div>
+                        {% else %}
+                            <span class="text-muted text-sm">Direct / Internal Dispatch</span>
+                        {% endif %}
+                    </td>
+                    {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                    <td class="text-right">
+                        <button type="button" class="btn btn-primary btn-sm btn-adjust-stock"
+                                data-product-id="{{ product.pk }}"
+                                data-product-name="{{ product.name }}"
+                                data-product-sku="{{ product.sku }}"
+                                data-stock="{{ product.stock_quantity }}"
+                                data-reorder="{{ product.reorder_level }}">
+                            ⚡ Restock
+                        </button>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% empty %}
+                <tr class="empty-row">
+                    <td colspan="{% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}8{% else %}7{% endif %}" class="empty-state" style="padding: 3rem; text-align: center;">
+                        <div class="empty-state-content">
+                            <span class="empty-icon" style="font-size: 3rem;">🎉</span>
+                            <h3 style="margin-top: 1rem;">No Low Stock Items Found!</h3>
+                            <p class="text-muted">All active catalog products currently maintain healthy physical stock above reorder thresholds.</p>
+                            <a href="{% url 'domain_app:inventory_dashboard' %}" class="btn btn-secondary btn-sm" style="margin-top: 1rem;">Return to Inventory Hub</a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Pagination Bar -->
+        {% if page_obj.has_other_pages %}
+        <div class="pagination-bar">
+            <span class="pagination-info">
+                Showing {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }} low-stock products
+            </span>
+            <div class="pagination-controls">
+                {% if page_obj.has_previous %}
+                    <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_supplier %}&supplier={{ selected_supplier }}{% endif %}" class="page-link">&laquo; Prev</a>
+                {% endif %}
+
+                {% for num in page_obj.paginator.page_range %}
+                    {% if page_obj.number == num %}
+                        <span class="page-link active">{{ num }}</span>
+                    {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_supplier %}&supplier={{ selected_supplier }}{% endif %}" class="page-link">{{ num }}</a>
+                    {% endif %}
+                {% endfor %}
+
+                {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_supplier %}&supplier={{ selected_supplier }}{% endif %}" class="page-link">Next &raquo;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Stock Adjustment Dynamic Modal (ES6+ AJAX) -->
+{% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+<div id="stockAdjustmentModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+        <div class="modal-header">
+            <div class="modal-title-group">
+                <span class="modal-icon">⚡</span>
+                <h3 class="modal-title">Inventory Stock Movement</h3>
+            </div>
+            <button type="button" class="modal-close" id="btnCloseAdjustModal">&times;</button>
+        </div>
+        
+        <form id="stockAdjustmentForm" method="post" action="">
+            {% csrf_token %}
+            <div class="modal-body">
+                <div class="modal-product-summary">
+                    <div>
+                        <strong id="modalProductName">Product Name</strong>
+                        <span class="product-sku-badge" id="modalProductSku">SKU</span>
+                    </div>
+                    <div class="current-stock-callout">
+                        Current: <strong id="modalCurrentStock">0</strong> units
+                        (Reorder: <span id="modalReorderLevel">10</span>)
+                    </div>
+                </div>
+
+                <div id="modalFormErrors" class="alert alert-error" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label class="form-label" for="stockAdjustmentType">Operation Type <span class="required-star">*</span></label>
+                    <select name="transaction_type" id="stockAdjustmentType" class="form-select" required>
+                        <option value="ADD">➕ Stock Added (Replenishment / Restock)</option>
+                        <option value="REMOVE">➖ Stock Removed (Sale / Dispatch / Waste)</option>
+                        <option value="ADJUSTMENT">🔄 Stock Adjustment (Physical Count Audit)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label class="form-label" for="stockAdjustmentQuantity" id="qtyFieldLabel">
+                        Units to Add <span class="required-star">*</span>
+                    </label>
+                    <input type="number" name="quantity" id="stockAdjustmentQuantity" class="form-input" min="1" step="1" placeholder="Enter units (e.g. 20)" required>
+                    <span class="field-help" id="qtyFieldHelp">Units added to physical inventory.</span>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label class="form-label" for="stockAdjustmentReference">Reference Identifier</label>
+                    <input type="text" name="reference" id="stockAdjustmentReference" class="form-input" placeholder="e.g., PO-4921, INV-8201, AUDIT-2026">
+                    <span class="field-help">Optional PO, invoice, or audit tracking number.</span>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="stockAdjustmentNotes">Operational Notes</label>
+                    <textarea name="notes" id="stockAdjustmentNotes" class="form-textarea" rows="2" placeholder="Optional rationale for this stock change..."></textarea>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-ghost" id="btnCancelAdjustModal">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="btnSubmitStockAdjust">
+                    Confirm Stock Update
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/inventory.js' %}"></script>
+{% endblock %}

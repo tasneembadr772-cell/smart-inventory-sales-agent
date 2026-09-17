@@ -7,7 +7,7 @@ Provides HTML widget styling, validation error mapping, and form sanitation.
 from decimal import Decimal
 from django import forms
 from django.db import models
-from .models import Category, Product, Supplier
+from .models import Category, Product, Supplier, InventoryTransaction
 
 
 class SupplierForm(forms.ModelForm):
@@ -126,6 +126,7 @@ class ProductForm(forms.ModelForm):
             'price',
             'stock_quantity',
             'reorder_level',
+            'target_stock_level',
             'is_active',
             'description',
         ]
@@ -168,6 +169,12 @@ class ProductForm(forms.ModelForm):
                 'step': '1',
                 'placeholder': '10',
                 'required': True,
+            }),
+            'target_stock_level': forms.NumberInput(attrs={
+                'class': 'form-input',
+                'min': '0',
+                'step': '1',
+                'placeholder': 'Optional target stock (e.g. 50)',
             }),
             'description': forms.Textarea(attrs={
                 'class': 'form-textarea',
@@ -228,6 +235,100 @@ class ProductForm(forms.ModelForm):
         if level is not None and level < 0:
             raise forms.ValidationError("Reorder level cannot be negative.")
         return level
+
+    def clean_target_stock_level(self):
+        target = self.cleaned_data.get('target_stock_level')
+        if target is not None and target < 0:
+            raise forms.ValidationError("Target stock level cannot be negative.")
+        return target
+
+
+class StockAdjustmentForm(forms.Form):
+    """
+    Form for processing stock movements (Add, Remove, Adjustment) on an existing product.
+    Enforces non-negative invariants and verifies available stock prior to removal.
+    """
+    transaction_type = forms.ChoiceField(
+        choices=InventoryTransaction.TransactionType.choices,
+        widget=forms.Select(attrs={'class': 'form-select', 'id': 'stockAdjustmentType'}),
+    )
+    quantity = forms.IntegerField(
+        min_value=0,
+        widget=forms.NumberInput(attrs={
+            'class': 'form-input',
+            'placeholder': 'Enter quantity units...',
+            'id': 'stockAdjustmentQuantity',
+            'required': True,
+        }),
+        help_text='For Add/Remove: units to change. For Adjustment: new total stock on hand.',
+    )
+    reference = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(attrs={
+            'class': 'form-input',
+            'placeholder': 'e.g., PO-1029, INV-8492, AUDIT-2026',
+            'id': 'stockAdjustmentReference',
+        }),
+    )
+    notes = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={
+            'class': 'form-textarea',
+            'rows': 3,
+            'placeholder': 'Reason or operational audit details...',
+            'id': 'stockAdjustmentNotes',
+        }),
+    )
+
+    def __init__(self, *args, product=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.product = product
+
+    def clean(self):
+        cleaned_data = super().clean()
+        tx_type = cleaned_data.get('transaction_type')
+        qty = cleaned_data.get('quantity')
+
+        if qty is None:
+            return cleaned_data
+
+        if tx_type in (InventoryTransaction.TransactionType.ADD, InventoryTransaction.TransactionType.REMOVE):
+            if qty <= 0:
+                self.add_error('quantity', "Quantity must be greater than zero for stock additions and removals.")
+
+        if tx_type == InventoryTransaction.TransactionType.REMOVE and self.product:
+            if self.product.stock_quantity < qty:
+                self.add_error(
+                    'quantity',
+                    f"Insufficient stock. Product currently has {self.product.stock_quantity} units on hand; cannot remove {qty}."
+                )
+
+        if tx_type == InventoryTransaction.TransactionType.ADJUSTMENT:
+            if qty < 0:
+                self.add_error('quantity', "Adjusted stock quantity cannot be negative.")
+
+        return cleaned_data
+
+
+class TransactionFilterForm(forms.Form):
+    """GET Filter form for inventory transaction audit logs."""
+    search = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'search-input',
+            'placeholder': 'Search by SKU, Product, Reference, Notes...',
+            'id': 'txSearchInput',
+        })
+    )
+    transaction_type = forms.ChoiceField(
+        choices=[('', 'All Transaction Types')] + InventoryTransaction.TransactionType.choices,
+        required=False,
+        widget=forms.Select(attrs={
+            'class': 'filter-select',
+            'id': 'txTypeFilterSelect',
+        })
+    )
 
 
 class ProductFilterForm(forms.Form):
