@@ -7,6 +7,7 @@ suitable for academic code defense and production-grade reliability.
 """
 
 from decimal import Decimal
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import models
@@ -237,6 +238,11 @@ class Product(models.Model):
         default=10,
         help_text='Threshold below which low-stock reorder alerts are triggered.',
     )
+    target_stock_level = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Optional target or maximum stock level for inventory replenishment.',
+    )
     is_active = models.BooleanField(
         default=True,
         db_index=True,
@@ -270,6 +276,10 @@ class Product(models.Model):
                 name='check_product_reorder_non_negative',
             ),
             models.CheckConstraint(
+                condition=models.Q(target_stock_level__isnull=True) | models.Q(target_stock_level__gte=0),
+                name='check_product_target_stock_non_negative',
+            ),
+            models.CheckConstraint(
                 condition=~models.Q(sku__exact=''),
                 name='check_product_sku_not_empty',
             ),
@@ -284,8 +294,11 @@ class Product(models.Model):
 
     @property
     def is_low_stock(self) -> bool:
-        """True if current stock is at or below the reorder threshold (and > 0)."""
-        return 0 < self.stock_quantity <= self.reorder_level
+        """
+        True if current stock is at or below the reorder threshold (quantity <= reorder_level).
+        Satisfies core business rule for inventory reorder alerting.
+        """
+        return self.stock_quantity <= self.reorder_level
 
     @property
     def is_out_of_stock(self) -> bool:
@@ -294,7 +307,7 @@ class Product(models.Model):
 
     @property
     def stock_status(self) -> str:
-        """Categorical health status indicator for UI rendering."""
+        """Categorical health status indicator for UI badge rendering."""
         if self.stock_quantity == 0:
             return 'out_of_stock'
         if self.stock_quantity <= self.reorder_level:
@@ -322,7 +335,120 @@ class Product(models.Model):
         if self.reorder_level is not None and self.reorder_level < 0:
             raise ValidationError({'reorder_level': 'Reorder level cannot be negative.'})
 
+        if self.target_stock_level is not None and self.target_stock_level < 0:
+            raise ValidationError({'target_stock_level': 'Target stock level cannot be negative.'})
+
     def save(self, *args, **kwargs):
         """Execute validation before committing to database."""
         self.clean()
         super().save(*args, **kwargs)
+
+
+class InventoryTransaction(models.Model):
+    """
+    Immutable audit ledger of stock movements and inventory adjustments.
+
+    Database Integrity & Normalization:
+    - Tracks every stock quantity change with prior and post snapshot values.
+    - Captures the operational type: ADD, REMOVE, or ADJUSTMENT.
+    - Enforces relational protection on Product (models.PROTECT) to avoid data loss.
+    - Check constraints guarantee non-negative quantities and stock counts.
+    - B-Tree composite indexes for fast audit querying and reporting.
+    """
+
+    class TransactionType(models.TextChoices):
+        ADD = 'ADD', 'Stock Added'
+        REMOVE = 'REMOVE', 'Stock Removed'
+        ADJUSTMENT = 'ADJUSTMENT', 'Stock Adjustment'
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name='stock_transactions',
+        db_index=True,
+        help_text='The product SKU affected by this stock transaction.',
+    )
+    transaction_type = models.CharField(
+        max_length=20,
+        choices=TransactionType.choices,
+        db_index=True,
+        help_text='Nature of the stock movement (added, removed, adjustment).',
+    )
+    quantity = models.PositiveIntegerField(
+        help_text='Quantity units moved or delta adjusted.',
+    )
+    previous_stock = models.PositiveIntegerField(
+        help_text='Stock quantity immediately prior to this transaction.',
+    )
+    new_stock = models.PositiveIntegerField(
+        help_text='Stock quantity immediately following this transaction.',
+    )
+    reference = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Reference code or identifier (e.g. PO, receipt, audit tag).',
+    )
+    notes = models.TextField(
+        blank=True,
+        default='',
+        help_text='Operational explanation or reason for the inventory change.',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='inventory_transactions',
+        help_text='Staff or manager who authorized/executed this stock movement.',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text='Timestamp when the transaction was committed.',
+    )
+
+    class Meta:
+        verbose_name = 'Inventory Transaction'
+        verbose_name_plural = 'Inventory Transactions'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['product', '-created_at'], name='idx_inv_tx_prod_date'),
+            models.Index(fields=['transaction_type', '-created_at'], name='idx_inv_tx_type_date'),
+            models.Index(fields=['-created_at'], name='idx_inv_tx_created'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=0),
+                name='check_inv_tx_qty_non_negative',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(previous_stock__gte=0),
+                name='check_inv_tx_prev_non_neg',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(new_stock__gte=0),
+                name='check_inv_tx_new_non_neg',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.get_transaction_type_display()}: {self.quantity} units for "
+            f"{self.product.sku} ({self.previous_stock} -> {self.new_stock})"
+        )
+
+    def clean(self):
+        """Model validation ensuring non-negative values."""
+        if self.quantity is not None and self.quantity < 0:
+            raise ValidationError({'quantity': 'Transaction quantity cannot be negative.'})
+        if self.previous_stock is not None and self.previous_stock < 0:
+            raise ValidationError({'previous_stock': 'Previous stock snapshot cannot be negative.'})
+        if self.new_stock is not None and self.new_stock < 0:
+            raise ValidationError({'new_stock': 'New stock snapshot cannot be negative.'})
+
+    def save(self, *args, **kwargs):
+        """Ensure clean validation before persisting."""
+        self.clean()
+        super().save(*args, **kwargs)
+

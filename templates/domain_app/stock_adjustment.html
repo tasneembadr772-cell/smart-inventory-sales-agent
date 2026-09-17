@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Stock Movement: {{ product.name }} | NexusERP{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:inventory_dashboard' %}">Inventory</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:product_detail' product.pk %}">{{ product.sku }}</a>
+                <span class="sep">/</span>
+                <span class="current">Adjust Stock</span>
+            </div>
+            <h1 class="page-title">Stock Movement: {{ product.name }}</h1>
+            <p class="page-subtitle">Execute an auditable physical stock change for SKU: <code>{{ product.sku }}</code></p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:product_detail' product.pk %}" class="btn btn-secondary">
+                &larr; Back to Product
+            </a>
+        </div>
+    </div>
+
+    <div class="form-container-card card" style="max-width: 650px; margin: 0 auto;">
+        <div class="modal-product-summary" style="margin-bottom: 1.5rem;">
+            <div>
+                <strong>{{ product.name }}</strong>
+                <span class="product-sku-badge">{{ product.sku }}</span>
+            </div>
+            <div class="current-stock-callout">
+                Available on Hand: <strong>{{ product.stock_quantity }}</strong> units (Reorder Threshold: {{ product.reorder_level }})
+            </div>
+        </div>
+
+        <form method="post" class="standard-form" novalidate>
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+            <div class="alert alert-error">
+                <span class="alert-icon">⚠️</span>
+                <div class="alert-content">
+                    {% for error in form.non_field_errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+                <label class="form-label" for="{{ form.transaction_type.id_for_label }}">
+                    Movement Type <span class="required-star">*</span>
+                </label>
+                {{ form.transaction_type }}
+                {% if form.transaction_type.errors %}
+                    <span class="field-error">{{ form.transaction_type.errors.0 }}</span>
+                {% endif %}
+                <span class="field-help">Choose whether you are adding replenishment stock, recording a dispatch/sale, or adjusting after a count.</span>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+                <label class="form-label" for="{{ form.quantity.id_for_label }}">
+                    Units Quantity <span class="required-star">*</span>
+                </label>
+                {{ form.quantity }}
+                {% if form.quantity.errors %}
+                    <span class="field-error">{{ form.quantity.errors.0 }}</span>
+                {% endif %}
+                <span class="field-help">{{ form.quantity.help_text }}</span>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+                <label class="form-label" for="{{ form.reference.id_for_label }}">
+                    Reference Tag / Identifier
+                </label>
+                {{ form.reference }}
+                {% if form.reference.errors %}
+                    <span class="field-error">{{ form.reference.errors.0 }}</span>
+                {% endif %}
+                <span class="field-help">Optional purchase order, receipt number, invoice, or audit tag.</span>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+                <label class="form-label" for="{{ form.notes.id_for_label }}">
+                    Audit Notes & Rationale
+                </label>
+                {{ form.notes }}
+                {% if form.notes.errors %}
+                    <span class="field-error">{{ form.notes.errors.0 }}</span>
+                {% endif %}
+            </div>
+
+            <div class="form-actions">
+                <a href="{% url 'domain_app:product_detail' product.pk %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">
+                    Commit Stock Movement
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

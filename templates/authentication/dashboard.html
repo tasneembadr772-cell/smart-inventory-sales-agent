@@ -15,12 +15,56 @@
             </p>
         </div>
         <div class="welcome-actions">
-            <a href="{% url 'domain_app:product_list' %}" class="btn btn-primary">Inventory Catalog</a>
-            <a href="{% url 'authentication:profile' %}" class="btn btn-secondary">Manage Profile</a>
+            <a href="{% url 'domain_app:inventory_dashboard' %}" class="btn btn-primary">⚡ Inventory Hub</a>
+            <a href="{% url 'domain_app:low_stock_list' %}" class="btn btn-secondary">⚠️ Low Stock Alerts</a>
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">Product Catalog</a>
+            <a href="{% url 'authentication:profile' %}" class="btn btn-secondary">Profile</a>
             {% if user.is_admin_role %}
             <a href="/admin/" target="_blank" class="btn btn-secondary">Django Admin</a>
             {% endif %}
         </div>
+    </div>
+
+    <!-- Inventory Operations & Health KPIs -->
+    <div class="section-header" style="margin-top: 2.5rem; display: flex; justify-content: space-between; align-items: flex-end;">
+        <div>
+            <h2 class="section-title">Inventory Operations & Stock Health</h2>
+            <p class="section-desc">Live overview of inventory volume, reorder thresholds, and operational alerts</p>
+        </div>
+        <div>
+            <a href="{% url 'domain_app:inventory_dashboard' %}" class="btn btn-secondary btn-sm">Open Inventory Hub &rarr;</a>
+        </div>
+    </div>
+
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-icon icon-blue">📦</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Total Products</span>
+                <span class="kpi-value">{{ kpis.total_products|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-purple">📊</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Total Stock Units</span>
+                <span class="kpi-value">{{ kpis.total_units|default:0 }}</span>
+            </div>
+        </div>
+        <a href="{% url 'domain_app:low_stock_list' %}" class="kpi-card {% if kpis.low_stock_count > 0 %}kpi-warning{% endif %}" style="text-decoration: none; color: inherit;">
+            <div class="kpi-icon icon-yellow">⚠️</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Low-Stock Alerts</span>
+                <span class="kpi-value">{{ kpis.low_stock_count|default:0 }}</span>
+            </div>
+        </a>
+        <a href="{% url 'domain_app:low_stock_list' %}" class="kpi-card {% if kpis.out_of_stock_count > 0 %}kpi-danger{% endif %}" style="text-decoration: none; color: inherit;">
+            <div class="kpi-icon icon-red">🚫</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Out-of-Stock SKUs</span>
+                <span class="kpi-value">{{ kpis.out_of_stock_count|default:0 }}</span>
+            </div>
+        </a>
     </div>
 
     <!-- RBAC Matrix & Access Control Overview -->

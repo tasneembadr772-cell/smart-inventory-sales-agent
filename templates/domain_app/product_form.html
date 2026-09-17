@@ -132,6 +132,18 @@
                     <span class="field-help">Alert is triggered when stock reaches or falls below this number.</span>
                 </div>
 
+                <!-- Target / Max Stock Level -->
+                <div class="form-group">
+                    <label for="{{ form.target_stock_level.id_for_label }}" class="form-label">
+                        Target / Max Stock Level
+                    </label>
+                    {{ form.target_stock_level }}
+                    {% if form.target_stock_level.errors %}
+                        <span class="field-error">{{ form.target_stock_level.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Optional target replenishment quantity used by inventory forecasting.</span>
+                </div>
+
                 <!-- Active Status Checkbox -->
                 <div class="form-group checkbox-group">
                     <div class="checkbox-wrapper">

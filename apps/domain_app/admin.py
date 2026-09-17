@@ -3,7 +3,7 @@ Django Administration Configuration for Inventory Domain Models.
 """
 
 from django.contrib import admin
-from .models import Category, Product, Supplier
+from .models import Category, Product, Supplier, InventoryTransaction
 
 
 @admin.register(Supplier)
@@ -49,6 +49,7 @@ class ProductAdmin(admin.ModelAdmin):
         'price',
         'stock_quantity',
         'reorder_level',
+        'target_stock_level',
         'stock_health_badge',
         'is_active',
         'created_at',
@@ -61,4 +62,33 @@ class ProductAdmin(admin.ModelAdmin):
     def stock_health_badge(self, obj):
         return obj.stock_status.replace('_', ' ').title()
     stock_health_badge.short_description = 'Stock Health'
+
+
+@admin.register(InventoryTransaction)
+class InventoryTransactionAdmin(admin.ModelAdmin):
+    list_display = (
+        'created_at',
+        'product',
+        'transaction_type',
+        'quantity',
+        'previous_stock',
+        'new_stock',
+        'reference',
+        'created_by',
+    )
+    list_filter = ('transaction_type', 'created_at')
+    search_fields = ('product__name', 'product__sku', 'reference', 'notes')
+    readonly_fields = (
+        'product',
+        'transaction_type',
+        'quantity',
+        'previous_stock',
+        'new_stock',
+        'reference',
+        'notes',
+        'created_by',
+        'created_at',
+    )
+    ordering = ('-created_at',)
+
 

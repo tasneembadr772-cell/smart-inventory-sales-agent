@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 from django.core.exceptions import ValidationError
 from django.db import transaction, models
 
-from .models import Category, Product, Supplier
+from .models import Category, Product, Supplier, InventoryTransaction
 
 _UNSET = object()
 
@@ -22,6 +22,16 @@ class DomainServiceError(Exception):
 
 class ProtectedCategoryError(DomainServiceError):
     """Raised when an attempt is made to delete a category that still contains products."""
+    pass
+
+
+class InsufficientStockError(DomainServiceError, ValidationError):
+    """Raised when an operation attempts to decrement stock beyond available units."""
+    pass
+
+
+class InvalidStockAdjustmentError(DomainServiceError, ValidationError):
+    """Raised when a stock adjustment violates business rules or constraints."""
     pass
 
 
@@ -39,11 +49,14 @@ def create_product(
     supplier: Optional[Supplier] = None,
     stock_quantity: int = 0,
     reorder_level: int = 10,
+    target_stock_level: Optional[int] = None,
     is_active: bool = True,
     description: str = "",
+    created_by=None,
 ) -> Product:
     """
     Creates and persists a new Product entity with validation.
+    Optionally records initial stock transaction if initial units > 0.
     """
     cleaned_sku = sku.strip().upper()
     if Product.objects.filter(sku=cleaned_sku).exists():
@@ -57,11 +70,25 @@ def create_product(
         price=price,
         stock_quantity=stock_quantity,
         reorder_level=reorder_level,
+        target_stock_level=target_stock_level,
         is_active=is_active,
         description=description.strip() if description else "",
     )
     product.full_clean()
     product.save()
+
+    if stock_quantity > 0:
+        InventoryTransaction.objects.create(
+            product=product,
+            transaction_type=InventoryTransaction.TransactionType.ADD,
+            quantity=stock_quantity,
+            previous_stock=0,
+            new_stock=stock_quantity,
+            reference='INITIAL-STOCK',
+            notes='Initial stock balance recorded upon SKU creation.',
+            created_by=created_by if created_by and created_by.is_authenticated else None,
+        )
+
     return product
 
 
@@ -76,6 +103,7 @@ def update_product(
     price: Optional[Decimal] = None,
     stock_quantity: Optional[int] = None,
     reorder_level: Optional[int] = None,
+    target_stock_level: Any = _UNSET,
     is_active: Optional[bool] = None,
     description: Optional[str] = None,
 ) -> Product:
@@ -99,6 +127,8 @@ def update_product(
         product.stock_quantity = stock_quantity
     if reorder_level is not None:
         product.reorder_level = reorder_level
+    if target_stock_level is not _UNSET:
+        product.target_stock_level = target_stock_level
     if is_active is not None:
         product.is_active = is_active
     if description is not None:
@@ -107,6 +137,150 @@ def update_product(
     product.full_clean()
     product.save()
     return product
+
+
+# ==============================================================================
+# Inventory & Stock Movement Operations
+# ==============================================================================
+
+@transaction.atomic
+def record_stock_movement(
+    *,
+    product: Product,
+    transaction_type: str,
+    quantity: int,
+    user=None,
+    reference: str = "",
+    notes: str = "",
+    new_stock: Optional[int] = None,
+) -> InventoryTransaction:
+    """
+    Executes an atomic, concurrency-safe stock movement with audit logging.
+    
+    Guarantees:
+    - ACID transaction: Locks the product row via `select_for_update()`.
+    - Non-negative invariant: Rejects removals or adjustments producing negative stock.
+    - Audit integrity: Persists an immutable InventoryTransaction record.
+    """
+    # Concurrency lock on product row to serialize updates and prevent race conditions
+    locked_product = Product.objects.select_for_update().get(pk=product.pk)
+    previous_stock = locked_product.stock_quantity
+
+    if transaction_type == InventoryTransaction.TransactionType.ADD:
+        if quantity <= 0:
+            raise ValidationError({'quantity': 'Stock addition quantity must be greater than zero.'})
+        calculated_new_stock = previous_stock + quantity
+        actual_quantity = quantity
+
+    elif transaction_type == InventoryTransaction.TransactionType.REMOVE:
+        if quantity <= 0:
+            raise ValidationError({'quantity': 'Stock removal quantity must be greater than zero.'})
+        if previous_stock < quantity:
+            raise InsufficientStockError(
+                f"Insufficient stock for product '{locked_product.name}' (SKU: {locked_product.sku}). "
+                f"Requested to remove: {quantity}, Available on hand: {previous_stock}."
+            )
+        calculated_new_stock = previous_stock - quantity
+        actual_quantity = quantity
+
+    elif transaction_type == InventoryTransaction.TransactionType.ADJUSTMENT:
+        if new_stock is not None:
+            if new_stock < 0:
+                raise InvalidStockAdjustmentError('Adjusted stock quantity cannot be negative.')
+            calculated_new_stock = new_stock
+            actual_quantity = abs(new_stock - previous_stock)
+        else:
+            # Quantity delta mode
+            calculated_new_stock = previous_stock + quantity
+            if calculated_new_stock < 0:
+                raise InvalidStockAdjustmentError(
+                    f"Resulting stock quantity ({calculated_new_stock}) cannot be negative."
+                )
+            actual_quantity = abs(quantity)
+    else:
+        raise ValidationError({'transaction_type': f"Invalid transaction type: '{transaction_type}'."})
+
+    # Update product stock quantity
+    locked_product.stock_quantity = calculated_new_stock
+    locked_product.full_clean()
+    locked_product.save(update_fields=['stock_quantity', 'updated_at'])
+
+    # Synchronize passed-in product instance in memory
+    product.stock_quantity = calculated_new_stock
+
+    # Create immutable audit transaction record
+    tx = InventoryTransaction.objects.create(
+        product=locked_product,
+        transaction_type=transaction_type,
+        quantity=actual_quantity,
+        previous_stock=previous_stock,
+        new_stock=calculated_new_stock,
+        reference=reference.strip() if reference else "",
+        notes=notes.strip() if notes else "",
+        created_by=user if user and user.is_authenticated else None,
+    )
+    return tx
+
+
+@transaction.atomic
+def add_stock(
+    *,
+    product: Product,
+    quantity: int,
+    user=None,
+    reference: str = "",
+    notes: str = "",
+) -> InventoryTransaction:
+    """Convenience service to record incoming stock / replenishment."""
+    return record_stock_movement(
+        product=product,
+        transaction_type=InventoryTransaction.TransactionType.ADD,
+        quantity=quantity,
+        user=user,
+        reference=reference,
+        notes=notes,
+    )
+
+
+@transaction.atomic
+def remove_stock(
+    *,
+    product: Product,
+    quantity: int,
+    user=None,
+    reference: str = "",
+    notes: str = "",
+) -> InventoryTransaction:
+    """Convenience service to record outgoing stock / dispatch / wastage."""
+    return record_stock_movement(
+        product=product,
+        transaction_type=InventoryTransaction.TransactionType.REMOVE,
+        quantity=quantity,
+        user=user,
+        reference=reference,
+        notes=notes,
+    )
+
+
+@transaction.atomic
+def adjust_stock(
+    *,
+    product: Product,
+    new_quantity: int,
+    user=None,
+    reference: str = "",
+    notes: str = "",
+) -> InventoryTransaction:
+    """Convenience service to calibrate physical stock count following audit."""
+    return record_stock_movement(
+        product=product,
+        transaction_type=InventoryTransaction.TransactionType.ADJUSTMENT,
+        quantity=0,
+        new_stock=new_quantity,
+        user=user,
+        reference=reference,
+        notes=notes,
+    )
 
 
 @transaction.atomic
