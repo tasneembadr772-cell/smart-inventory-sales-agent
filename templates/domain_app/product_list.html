@@ -20,6 +20,9 @@
             <a href="{% url 'domain_app:category_list' %}" class="btn btn-secondary">
                 <span class="btn-icon">📁</span> Categories
             </a>
+            <a href="{% url 'domain_app:supplier_list' %}" class="btn btn-secondary">
+                <span class="btn-icon">🏢</span> Suppliers
+            </a>
             {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
             <a href="{% url 'domain_app:product_create' %}" class="btn btn-primary" id="btnCreateProduct">
                 <span class="btn-icon">➕</span> Add Product

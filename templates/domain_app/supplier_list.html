@@ -1,0 +1,201 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Supplier Management | Inventory Management{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Page Header & Action Controls -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <span class="current">Suppliers</span>
+            </div>
+            <h1 class="page-title">Supplier Management</h1>
+            <p class="page-subtitle">Manage external suppliers, contact persons, procurement records, and catalog linkages.</p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">
+                &larr; Products Catalog
+            </a>
+            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+            <a href="{% url 'domain_app:supplier_create' %}" class="btn btn-primary" id="btnCreateSupplier">
+                <span class="btn-icon">➕</span> Add Supplier
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Supplier KPI Summary Cards -->
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-icon icon-blue">🏢</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Total Suppliers</span>
+                <span class="kpi-value">{{ kpis.total_suppliers|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-green">✅</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Active Partners</span>
+                <span class="kpi-value">{{ kpis.active_suppliers|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-yellow">⏸️</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Inactive / On Hold</span>
+                <span class="kpi-value">{{ kpis.inactive_suppliers|default:0 }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter & Live Search Toolbar -->
+    <div class="filter-toolbar card">
+        <form method="get" action="{% url 'domain_app:supplier_list' %}" class="filter-form" id="supplierFilterForm">
+            <div class="filter-group search-group">
+                <span class="search-icon">🔍</span>
+                {{ filter_form.search }}
+            </div>
+
+            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+            <div class="filter-group">
+                {{ filter_form.status }}
+            </div>
+            {% endif %}
+
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
+                <a href="{% url 'domain_app:supplier_list' %}" class="btn btn-ghost btn-sm" id="resetSupplierFilters">Reset</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Suppliers Data Table -->
+    <div class="table-container card">
+        <table class="data-table" id="suppliersTable">
+            <thead>
+                <tr>
+                    <th>Supplier & Contact</th>
+                    <th>Email & Phone</th>
+                    <th>Dispatch Address</th>
+                    <th class="text-center">Supplied Products</th>
+                    <th class="text-center">Status</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for supplier in suppliers %}
+                <tr class="supplier-row" 
+                    data-name="{{ supplier.name|lower }}" 
+                    data-contact="{{ supplier.contact_person|lower }}"
+                    data-email="{{ supplier.email|lower }}"
+                    data-phone="{{ supplier.phone|lower }}">
+                    <td class="supplier-identity">
+                        <div class="supplier-title-group">
+                            <a href="{% url 'domain_app:supplier_detail' supplier.pk %}" class="supplier-name-link font-bold">
+                                {{ supplier.name }}
+                            </a>
+                            {% if supplier.contact_person %}
+                            <span class="supplier-contact-badge text-muted">👤 {{ supplier.contact_person }}</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <div class="contact-info">
+                            <a href="mailto:{{ supplier.email }}" class="contact-email font-mono">{{ supplier.email }}</a>
+                            <span class="contact-phone text-muted">📞 {{ supplier.phone }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <p class="address-text text-muted">
+                            {{ supplier.address|default:"No address specified"|truncatechars:65 }}
+                        </p>
+                    </td>
+                    <td class="text-center">
+                        <a href="{% url 'domain_app:supplier_detail' supplier.pk %}" class="badge badge-info" title="View products from this supplier">
+                            {{ supplier.total_products }} item{{ supplier.total_products|pluralize }}
+                        </a>
+                    </td>
+                    <td class="text-center">
+                        {% if supplier.is_active %}
+                            <span class="status-indicator active">Active</span>
+                        {% else %}
+                            <span class="status-indicator inactive">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right actions-cell">
+                        <div class="row-actions">
+                            <a href="{% url 'domain_app:supplier_detail' supplier.pk %}" class="action-btn view-btn" title="View Supplier Details">
+                                👁️
+                            </a>
+                            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                            <a href="{% url 'domain_app:supplier_update' supplier.pk %}" class="action-btn edit-btn" title="Edit Supplier">
+                                ✏️
+                            </a>
+                            <a href="{% url 'domain_app:supplier_delete' supplier.pk %}" class="action-btn delete-btn" title="Delete Supplier">
+                                🗑️
+                            </a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr class="empty-row" id="supplierEmptyRow">
+                    <td colspan="6" class="empty-state">
+                        <div class="empty-state-content">
+                            <span class="empty-icon">🏢</span>
+                            <h3>No Suppliers Found</h3>
+                            <p>Get started by adding your first procurement supplier to the system.</p>
+                            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                            <a href="{% url 'domain_app:supplier_create' %}" class="btn btn-primary btn-sm">Add New Supplier</a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Dynamic Live Search Empty State (revealed when client-side filters match nothing) -->
+        <div id="noSearchMatches" class="empty-state" style="display: none; padding: 2rem; text-align: center;">
+            <span class="empty-icon" style="font-size: 2rem;">🔍</span>
+            <h3>No matching suppliers found</h3>
+            <p class="text-muted">Try adjusting your search terms or clearing the filter.</p>
+        </div>
+
+        <!-- Pagination Controls -->
+        {% if page_obj.has_other_pages %}
+        <div class="table-pagination">
+            <span class="pagination-summary">
+                Showing {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }} suppliers
+            </span>
+            <div class="pagination-controls">
+                {% if page_obj.has_previous %}
+                    <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_status %}&status={{ selected_status }}{% endif %}" class="page-link">&laquo; Prev</a>
+                {% endif %}
+
+                {% for num in page_obj.paginator.page_range %}
+                    {% if page_obj.number == num %}
+                        <span class="page-link active">{{ num }}</span>
+                    {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_status %}&status={{ selected_status }}{% endif %}" class="page-link">{{ num }}</a>
+                    {% endif %}
+                {% endfor %}
+
+                {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_status %}&status={{ selected_status }}{% endif %}" class="page-link">Next &raquo;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/supplier.js' %}"></script>
+{% endblock %}

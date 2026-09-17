@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Confirm Supplier Deletion: {{ supplier.name }} | Inventory Management{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:supplier_list' %}">Suppliers</a>
+                <span class="sep">/</span>
+                <span class="current">Delete {{ supplier.name }}</span>
+            </div>
+            <h1 class="page-title text-danger">Delete Supplier Confirmation</h1>
+        </div>
+    </div>
+
+    <div class="card danger-card">
+        <div class="danger-header">
+            <span class="danger-icon">⚠️</span>
+            <div>
+                <h3>Are you sure you want to permanently delete supplier "{{ supplier.name }}"?</h3>
+                <p class="text-secondary">
+                    This action will permanently remove this vendor record from the procurement registry.
+                </p>
+            </div>
+        </div>
+
+        {% if product_count > 0 %}
+        <div class="delete-item-summary" style="margin: 1.5rem 0; padding: 1rem 1.25rem; background: var(--card-bg-light, rgba(255,255,255,0.03)); border-radius: var(--radius-md, 8px); border-left: 4px solid var(--warning, #f59e0b);">
+            <p style="margin: 0; font-weight: 500;">
+                ℹ️ <strong>Relational Safety Notice:</strong>
+                This supplier is currently linked to <strong>{{ product_count }}</strong> inventory product{{ product_count|pluralize }}.
+                Deleting this supplier will safely set the supplier reference to <em>Unassigned</em> (<code>models.SET_NULL</code>).
+                No product records or stock counts will be lost or deleted.
+            </p>
+        </div>
+        {% else %}
+        <div class="delete-item-summary" style="margin: 1.5rem 0;">
+            <p class="text-secondary">
+                This supplier currently has 0 linked products in the catalog.
+            </p>
+        </div>
+        {% endif %}
+
+        <div class="supplier-preview-info" style="margin-bottom: 2rem; font-size: 0.95rem; color: var(--text-muted, #94a3b8);">
+            <p><strong>Contact Person:</strong> {{ supplier.contact_person|default:"N/A" }} &bull; <strong>Email:</strong> {{ supplier.email }} &bull; <strong>Phone:</strong> {{ supplier.phone }}</p>
+        </div>
+
+        <form method="post" class="danger-form">
+            {% csrf_token %}
+            <div class="form-actions">
+                <a href="{% url 'domain_app:supplier_detail' supplier.pk %}" class="btn btn-secondary">
+                    Cancel & Return
+                </a>
+                <button type="submit" class="btn btn-danger">
+                    Yes, Permanently Delete Supplier
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
