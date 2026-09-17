@@ -84,6 +84,18 @@
                     <span class="field-help">Select the taxonomy group for this product.</span>
                 </div>
 
+                <!-- Supplier -->
+                <div class="form-group">
+                    <label for="{{ form.supplier.id_for_label }}" class="form-label">
+                        Supplier / Vendor
+                    </label>
+                    {{ form.supplier }}
+                    {% if form.supplier.errors %}
+                        <span class="field-error">{{ form.supplier.errors.0 }}</span>
+                    {% endif %}
+                    <span class="field-help">Designate external procurement vendor furnishing this SKU.</span>
+                </div>
+
                 <!-- Price -->
                 <div class="form-group">
                     <label for="{{ form.price.id_for_label }}" class="form-label">

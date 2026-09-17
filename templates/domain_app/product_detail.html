@@ -63,6 +63,18 @@
                     <span class="spec-value category-pill">{{ product.category.name }}</span>
                 </div>
                 <div class="spec-item">
+                    <span class="spec-label">Furnishing Supplier</span>
+                    <span class="spec-value">
+                        {% if product.supplier %}
+                            <a href="{% url 'domain_app:supplier_detail' product.supplier.pk %}" class="badge badge-info">
+                                🏢 {{ product.supplier.name }}
+                            </a>
+                        {% else %}
+                            <span class="text-muted">Direct / Internal</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="spec-item">
                     <span class="spec-label">Unit Price</span>
                     <span class="spec-value font-mono price-highlight">${{ product.price|floatformat:2 }}</span>
                 </div>

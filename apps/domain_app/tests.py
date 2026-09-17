@@ -16,7 +16,8 @@ from django.db import IntegrityError, models
 from django.test import TestCase, Client
 from django.urls import reverse
 
-from .models import Category, Product
+from .models import Category, Product, Supplier
+from .forms import SupplierForm
 from . import selectors, services
 
 User = get_user_model()
@@ -496,3 +497,366 @@ class RoleBasedAccessControlViewsTestCase(TestCase):
         self.assertEqual(response.status_code, 302)
         # Category must still exist due to ProtectedCategoryError
         self.assertTrue(Category.objects.filter(pk=self.category.pk).exists())
+
+
+class SupplierModelAndRelationshipTestCase(TestCase):
+    """
+    Verifies Supplier model normalization, constraints, validation,
+    and direct ForeignKey relationship from Product to Supplier (models.SET_NULL).
+    """
+
+    def setUp(self):
+        self.category = Category.objects.create(name='Components & ICs')
+        self.supplier = Supplier.objects.create(
+            name='Global Silicon Tech',
+            contact_person='Alice Cooper',
+            email='alice@globalsilicon.com',
+            phone='+1 (555) 123-4567',
+            address='100 Silicon Blvd, San Jose, CA',
+            is_active=True,
+        )
+
+    def test_supplier_creation_and_attributes(self):
+        self.assertEqual(self.supplier.name, 'Global Silicon Tech')
+        self.assertEqual(self.supplier.contact_person, 'Alice Cooper')
+        self.assertEqual(self.supplier.email, 'alice@globalsilicon.com')
+        self.assertEqual(self.supplier.phone, '+1 (555) 123-4567')
+        self.assertTrue(self.supplier.is_active)
+        self.assertEqual(str(self.supplier), 'Global Silicon Tech')
+
+    def test_supplier_email_normalization_and_validation(self):
+        # Email is automatically lowercased and stripped
+        supp = Supplier(
+            name='Normalized Tech',
+            email='  TEST@Domain.COM  ',
+            phone='123456',
+        )
+        supp.save()
+        self.assertEqual(supp.email, 'test@domain.com')
+
+    def test_supplier_invalid_email_raises_validation_error(self):
+        with self.assertRaises(ValidationError):
+            supp = Supplier(
+                name='Invalid Email Vendor',
+                email='not-an-email',
+                phone='123456',
+            )
+            supp.full_clean()
+            supp.save()
+
+    def test_supplier_empty_name_raises_validation_error(self):
+        with self.assertRaises(ValidationError):
+            supp = Supplier(
+                name='   ',
+                email='valid@email.com',
+                phone='123456',
+            )
+            supp.full_clean()
+            supp.save()
+
+    def test_link_product_to_supplier_foreign_key(self):
+        product = Product.objects.create(
+            name='Microcontroller Unit 32-bit',
+            sku='MCU-32-001',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('5.50'),
+            stock_quantity=500,
+        )
+        self.assertEqual(product.supplier, self.supplier)
+        self.assertIn(product, self.supplier.products.all())
+        self.assertEqual(self.supplier.products.count(), 1)
+
+    def test_deleting_supplier_sets_product_supplier_to_null(self):
+        """
+        Academic Defense Highlight:
+        Verifies `on_delete=models.SET_NULL` preserves inventory SKUs while decoupling deleted suppliers.
+        """
+        product = Product.objects.create(
+            name='Capacitor 100uF',
+            sku='CAP-100UF-01',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('0.25'),
+            stock_quantity=1000,
+        )
+        self.assertEqual(product.supplier_id, self.supplier.id)
+
+        # Delete supplier
+        self.supplier.delete()
+
+        # Product must remain intact, supplier set to NULL
+        product.refresh_from_db()
+        self.assertIsNone(product.supplier)
+        self.assertIsNone(product.supplier_id)
+        self.assertTrue(Product.objects.filter(sku='CAP-100UF-01').exists())
+
+
+class SupplierServicesAndSelectorsTestCase(TestCase):
+    """
+    Tests Supplier domain services and selectors.
+    """
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='supplier_admin',
+            email='sadmin@test.com',
+            password='Password123!',
+            role=User.Role.ADMIN,
+        )
+        self.standard = User.objects.create_user(
+            username='supplier_std',
+            email='sstd@test.com',
+            password='Password123!',
+            role=User.Role.STANDARD,
+        )
+        self.active_supp = services.create_supplier(
+            name='Alpha Industrial Corp',
+            contact_person='Bob Vance',
+            email='bob@alphaind.com',
+            phone='555-0101',
+            address='Scranton, PA',
+            is_active=True,
+        )
+        self.inactive_supp = services.create_supplier(
+            name='Omega Liquidators',
+            contact_person='Zoe Washburne',
+            email='zoe@omegaliquid.com',
+            phone='555-0199',
+            is_active=False,
+        )
+
+    def test_create_supplier_service(self):
+        supp = services.create_supplier(
+            name='Beta Manufacturing',
+            contact_person='Charlie Day',
+            email='charlie@paddys.com',
+            phone='555-0123',
+        )
+        self.assertEqual(supp.name, 'Beta Manufacturing')
+        self.assertEqual(supp.email, 'charlie@paddys.com')
+        self.assertTrue(supp.is_active)
+
+    def test_update_supplier_service(self):
+        updated = services.update_supplier(
+            self.active_supp,
+            name='Alpha Industrial Global',
+            phone='555-9999',
+        )
+        self.assertEqual(updated.name, 'Alpha Industrial Global')
+        self.assertEqual(updated.phone, '555-9999')
+
+    def test_delete_supplier_service(self):
+        pk = self.active_supp.pk
+        services.delete_supplier(self.active_supp)
+        self.assertFalse(Supplier.objects.filter(pk=pk).exists())
+
+    def test_standard_user_only_sees_active_suppliers(self):
+        qs = selectors.get_suppliers_queryset(user=self.standard)
+        self.assertEqual(qs.count(), 1)
+        self.assertIn(self.active_supp, qs)
+        self.assertNotIn(self.inactive_supp, qs)
+
+    def test_admin_user_sees_all_suppliers(self):
+        qs = selectors.get_suppliers_queryset(user=self.admin)
+        self.assertEqual(qs.count(), 2)
+        self.assertIn(self.inactive_supp, qs)
+
+    def test_supplier_search_filter(self):
+        qs_name = selectors.get_suppliers_queryset(user=self.admin, search='Alpha')
+        self.assertEqual(qs_name.count(), 1)
+        self.assertEqual(qs_name.first(), self.active_supp)
+
+        qs_email = selectors.get_suppliers_queryset(user=self.admin, search='omegaliquid')
+        self.assertEqual(qs_email.count(), 1)
+        self.assertEqual(qs_email.first(), self.inactive_supp)
+
+    def test_supplier_kpis(self):
+        kpis = selectors.get_supplier_kpis()
+        self.assertEqual(kpis['total_suppliers'], 2)
+        self.assertEqual(kpis['active_suppliers'], 1)
+        self.assertEqual(kpis['inactive_suppliers'], 1)
+
+
+class SupplierFormsTestCase(TestCase):
+    """
+    Tests validation and behavior of SupplierForm and SupplierFilterForm.
+    """
+
+    def test_valid_supplier_form(self):
+        form = SupplierForm(data={
+            'name': 'Valid Supplier Inc',
+            'contact_person': 'Jane Doe',
+            'email': 'jane@validsupplier.com',
+            'phone': '+1 800 555 1234',
+            'address': '123 Enterprise Way',
+            'is_active': True,
+        })
+        self.assertTrue(form.is_valid())
+
+    def test_invalid_email_in_form(self):
+        form = SupplierForm(data={
+            'name': 'Invalid Email Co',
+            'email': 'bad-email-format',
+            'phone': '555-1234',
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn('email', form.errors)
+
+    def test_empty_required_fields_in_form(self):
+        form = SupplierForm(data={
+            'name': '',
+            'email': '',
+            'phone': '',
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn('name', form.errors)
+        self.assertIn('email', form.errors)
+        self.assertIn('phone', form.errors)
+
+
+class SupplierRBACViewsTestCase(TestCase):
+    """
+    Verifies Role-Based Access Control (RBAC) across all Supplier endpoints:
+    - Admin: Full CRUD on Suppliers.
+    - Manager: Full CRUD on Suppliers (Create, Read, Update, Delete per prompt requirement).
+    - Standard User: Read-only access to Supplier list and detail; Create/Update/Delete are 403 Forbidden.
+    - Anonymous: Redirected to login.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.supplier = Supplier.objects.create(
+            name='Precision Instruments Ltd',
+            contact_person='Dr. Marcus',
+            email='marcus@precision.com',
+            phone='555-4321',
+            is_active=True,
+        )
+        self.admin = User.objects.create_user(
+            username='supp_admin',
+            email='sadmin2@test.com',
+            password='Password123!',
+            role=User.Role.ADMIN,
+        )
+        self.manager = User.objects.create_user(
+            username='supp_manager',
+            email='smanager2@test.com',
+            password='Password123!',
+            role=User.Role.MANAGER,
+        )
+        self.standard = User.objects.create_user(
+            username='supp_standard',
+            email='sstandard2@test.com',
+            password='Password123!',
+            role=User.Role.STANDARD,
+        )
+
+    # 1. Anonymous Access
+    def test_anonymous_redirected_from_supplier_list(self):
+        response = self.client.get(reverse('domain_app:supplier_list'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('authentication:login'), response.url)
+
+    def test_anonymous_redirected_from_supplier_create(self):
+        response = self.client.get(reverse('domain_app:supplier_create'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('authentication:login'), response.url)
+
+    # 2. Standard User Access (Read-Only)
+    def test_standard_user_can_view_supplier_list(self):
+        self.client.force_login(self.standard)
+        response = self.client.get(reverse('domain_app:supplier_list'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Precision Instruments Ltd')
+
+    def test_standard_user_can_view_supplier_detail(self):
+        self.client.force_login(self.standard)
+        response = self.client.get(reverse('domain_app:supplier_detail', args=[self.supplier.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'marcus@precision.com')
+
+    def test_standard_user_forbidden_from_supplier_create(self):
+        self.client.force_login(self.standard)
+        res_get = self.client.get(reverse('domain_app:supplier_create'))
+        self.assertEqual(res_get.status_code, 403)
+
+        res_post = self.client.post(reverse('domain_app:supplier_create'), {
+            'name': 'Unauthorized Supplier',
+            'email': 'unauth@test.com',
+            'phone': '555-0000',
+            'is_active': True,
+        })
+        self.assertEqual(res_post.status_code, 403)
+
+    def test_standard_user_forbidden_from_supplier_update(self):
+        self.client.force_login(self.standard)
+        response = self.client.post(reverse('domain_app:supplier_update', args=[self.supplier.pk]), {
+            'name': 'Hacked Supplier Name',
+            'email': self.supplier.email,
+            'phone': self.supplier.phone,
+            'is_active': True,
+        })
+        self.assertEqual(response.status_code, 403)
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.name, 'Precision Instruments Ltd')
+
+    def test_standard_user_forbidden_from_supplier_delete(self):
+        self.client.force_login(self.standard)
+        response = self.client.post(reverse('domain_app:supplier_delete', args=[self.supplier.pk]))
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Supplier.objects.filter(pk=self.supplier.pk).exists())
+
+    # 3. Manager Access (Can Create, Update, and Delete per prompt RBAC requirement)
+    def test_manager_can_create_supplier(self):
+        self.client.force_login(self.manager)
+        response = self.client.post(reverse('domain_app:supplier_create'), {
+            'name': 'Manager Created Supplier',
+            'contact_person': 'Tom Hagen',
+            'email': 'tom@corleone.com',
+            'phone': '555-7777',
+            'address': 'Long Beach, NY',
+            'is_active': True,
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Supplier.objects.filter(name='Manager Created Supplier').exists())
+
+    def test_manager_can_update_supplier(self):
+        self.client.force_login(self.manager)
+        response = self.client.post(reverse('domain_app:supplier_update', args=[self.supplier.pk]), {
+            'name': 'Precision Instruments Worldwide',
+            'contact_person': 'Dr. Marcus',
+            'email': 'marcus@precision-global.com',
+            'phone': '555-4321',
+            'is_active': True,
+        })
+        self.assertEqual(response.status_code, 302)
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.name, 'Precision Instruments Worldwide')
+        self.assertEqual(self.supplier.email, 'marcus@precision-global.com')
+
+    def test_manager_can_delete_supplier(self):
+        self.client.force_login(self.manager)
+        supp_to_delete = Supplier.objects.create(
+            name='Temporary Supplier for Delete',
+            email='temp@delete.com',
+            phone='555-9876',
+            is_active=True,
+        )
+        response = self.client.post(reverse('domain_app:supplier_delete', args=[supp_to_delete.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Supplier.objects.filter(pk=supp_to_delete.pk).exists())
+
+    # 4. Admin Access (Full Management)
+    def test_admin_can_manage_and_delete_supplier(self):
+        self.client.force_login(self.admin)
+        supp_to_delete = Supplier.objects.create(
+            name='Admin Deletable Supplier',
+            email='admin_del@test.com',
+            phone='555-4444',
+            is_active=True,
+        )
+        response = self.client.post(reverse('domain_app:supplier_delete', args=[supp_to_delete.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Supplier.objects.filter(pk=supp_to_delete.pk).exists())
+

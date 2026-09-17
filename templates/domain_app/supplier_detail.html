@@ -1,0 +1,192 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ supplier.name }} | Supplier Details{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Breadcrumb & Header -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:supplier_list' %}">Suppliers</a>
+                <span class="sep">/</span>
+                <span class="current">{{ supplier.name }}</span>
+            </div>
+            <div class="title-with-badges">
+                <h1 class="page-title">{{ supplier.name }}</h1>
+                {% if supplier.is_active %}
+                    <span class="badge badge-success">Active Supplier</span>
+                {% else %}
+                    <span class="badge badge-secondary">Inactive / Suspended</span>
+                {% endif %}
+                <span class="badge badge-info">{{ products.count }} Supplied SKU{{ products.count|pluralize }}</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:supplier_list' %}" class="btn btn-secondary">
+                &larr; Back to Suppliers
+            </a>
+            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+            <a href="{% url 'domain_app:supplier_update' supplier.pk %}" class="btn btn-primary">
+                ✏️ Edit Supplier
+            </a>
+            <a href="{% url 'domain_app:supplier_delete' supplier.pk %}" class="btn btn-danger">
+                🗑️ Delete
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Supplier Details Grid -->
+    <div class="product-details-grid">
+        <!-- Main Supplier Info Card -->
+        <div class="card detail-card main-info">
+            <h2 class="card-section-title">Corporate & Procurement Contact Profile</h2>
+            
+            <div class="spec-grid">
+                <div class="spec-item">
+                    <span class="spec-label">Company Name</span>
+                    <span class="spec-value font-bold">{{ supplier.name }}</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Contact Person</span>
+                    <span class="spec-value">{{ supplier.contact_person|default:"Not specified" }}</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Email Address</span>
+                    <span class="spec-value font-mono">
+                        <a href="mailto:{{ supplier.email }}" class="contact-email">{{ supplier.email }}</a>
+                    </span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Direct Phone</span>
+                    <span class="spec-value font-mono">
+                        <a href="tel:{{ supplier.phone }}">{{ supplier.phone }}</a>
+                    </span>
+                </div>
+                <div class="spec-item col-span-2">
+                    <span class="spec-label">Facility / Dispatch Address</span>
+                    <span class="spec-value">{{ supplier.address|default:"No physical address recorded."|linebreaksbr }}</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Status</span>
+                    <span class="spec-value">
+                        {% if supplier.is_active %}
+                            <span class="status-indicator active">Active</span>
+                        {% else %}
+                            <span class="status-indicator inactive">Inactive</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Partnership Record Date</span>
+                    <span class="spec-value">{{ supplier.created_at|date:"M d, Y" }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar Meta Card -->
+        <div class="card detail-card meta-sidebar">
+            <h3 class="card-section-title">Supplier Audit Record</h3>
+            <ul class="meta-list">
+                <li class="meta-item">
+                    <span class="meta-label">Supplier ID</span>
+                    <span class="meta-val font-mono">#{{ supplier.id }}</span>
+                </li>
+                <li class="meta-item">
+                    <span class="meta-label">Onboarded On</span>
+                    <span class="meta-val">{{ supplier.created_at|date:"M d, Y H:i" }}</span>
+                </li>
+                <li class="meta-item">
+                    <span class="meta-label">Last Modified</span>
+                    <span class="meta-val">{{ supplier.updated_at|date:"M d, Y H:i" }}</span>
+                </li>
+                <li class="meta-item">
+                    <span class="meta-label">Linked SKUs</span>
+                    <span class="meta-val font-bold">{{ products.count }} catalog item{{ products.count|pluralize }}</span>
+                </li>
+            </ul>
+
+            <div class="protection-notice">
+                <span class="notice-icon">🛡️</span>
+                <p>Relational integrity: Deleting this supplier decouples referencing products safely without data destruction (SET_NULL).</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Associated Products Table Card -->
+    <div class="table-container card" style="margin-top: 2rem;">
+        <div class="card-header-bar" style="padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08));">
+            <h2 class="card-section-title" style="margin: 0;">Products Furnished by this Supplier ({{ products.count }})</h2>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Product & SKU</th>
+                    <th>Category</th>
+                    <th class="text-right">Unit Price</th>
+                    <th class="text-center">Stock / Threshold</th>
+                    <th class="text-center">Status</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for prod in products %}
+                <tr class="product-row">
+                    <td class="product-identity">
+                        <div class="product-title-group">
+                            <a href="{% url 'domain_app:product_detail' prod.pk %}" class="product-name-link font-bold">
+                                {{ prod.name }}
+                            </a>
+                            <span class="product-sku-badge">{{ prod.sku }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="category-pill">{{ prod.category.name }}</span>
+                    </td>
+                    <td class="text-right font-mono font-bold">
+                        ${{ prod.price|floatformat:2 }}
+                    </td>
+                    <td class="text-center">
+                        <span class="stock-qty font-bold">{{ prod.stock_quantity }}</span>
+                        <span class="stock-reorder-hint text-muted">/ {{ prod.reorder_level }}</span>
+                    </td>
+                    <td class="text-center">
+                        {% if prod.stock_status == 'out_of_stock' %}
+                            <span class="badge badge-danger">Out of Stock</span>
+                        {% elif prod.stock_status == 'low_stock' %}
+                            <span class="badge badge-warning">Low Stock</span>
+                        {% else %}
+                            <span class="badge badge-success">In Stock</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right actions-cell">
+                        <div class="row-actions">
+                            <a href="{% url 'domain_app:product_detail' prod.pk %}" class="action-btn view-btn" title="View Product">
+                                👁️
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr class="empty-row">
+                    <td colspan="6" class="empty-state">
+                        <div class="empty-state-content">
+                            <span class="empty-icon">📦</span>
+                            <h3>No Products Assigned</h3>
+                            <p>There are currently no products linked to this supplier.</p>
+                            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                            <a href="{% url 'domain_app:product_create' %}" class="btn btn-primary btn-sm">Add Product</a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -10,7 +10,9 @@ from typing import Optional, Dict, Any
 from django.core.exceptions import ValidationError
 from django.db import transaction, models
 
-from .models import Category, Product
+from .models import Category, Product, Supplier
+
+_UNSET = object()
 
 
 class DomainServiceError(Exception):
@@ -34,6 +36,7 @@ def create_product(
     sku: str,
     category: Category,
     price: Decimal,
+    supplier: Optional[Supplier] = None,
     stock_quantity: int = 0,
     reorder_level: int = 10,
     is_active: bool = True,
@@ -50,6 +53,7 @@ def create_product(
         name=name.strip(),
         sku=cleaned_sku,
         category=category,
+        supplier=supplier,
         price=price,
         stock_quantity=stock_quantity,
         reorder_level=reorder_level,
@@ -68,6 +72,7 @@ def update_product(
     name: Optional[str] = None,
     sku: Optional[str] = None,
     category: Optional[Category] = None,
+    supplier: Any = _UNSET,
     price: Optional[Decimal] = None,
     stock_quantity: Optional[int] = None,
     reorder_level: Optional[int] = None,
@@ -86,6 +91,8 @@ def update_product(
         product.sku = cleaned_sku
     if category is not None:
         product.category = category
+    if supplier is not _UNSET:
+        product.supplier = supplier
     if price is not None:
         product.price = price
     if stock_quantity is not None:
@@ -183,3 +190,75 @@ def delete_category(category: Category) -> None:
         raise ProtectedCategoryError(
             f"Database protection prevented deletion of category '{category.name}'."
         ) from exc
+
+
+# ==============================================================================
+# Supplier Service Operations
+# ==============================================================================
+
+@transaction.atomic
+def create_supplier(
+    *,
+    name: str,
+    email: str,
+    phone: str,
+    contact_person: str = "",
+    address: str = "",
+    is_active: bool = True,
+) -> Supplier:
+    """
+    Creates and persists a new Supplier entity with validation.
+    """
+    supplier = Supplier(
+        name=name.strip(),
+        contact_person=contact_person.strip() if contact_person else "",
+        email=email.strip().lower(),
+        phone=phone.strip(),
+        address=address.strip() if address else "",
+        is_active=is_active,
+    )
+    supplier.full_clean()
+    supplier.save()
+    return supplier
+
+
+@transaction.atomic
+def update_supplier(
+    supplier: Supplier,
+    *,
+    name: Optional[str] = None,
+    contact_person: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    address: Optional[str] = None,
+    is_active: Optional[bool] = None,
+) -> Supplier:
+    """
+    Updates an existing Supplier entity.
+    """
+    if name is not None:
+        supplier.name = name.strip()
+    if contact_person is not None:
+        supplier.contact_person = contact_person.strip()
+    if email is not None:
+        supplier.email = email.strip().lower()
+    if phone is not None:
+        supplier.phone = phone.strip()
+    if address is not None:
+        supplier.address = address.strip()
+    if is_active is not None:
+        supplier.is_active = is_active
+
+    supplier.full_clean()
+    supplier.save()
+    return supplier
+
+
+@transaction.atomic
+def delete_supplier(supplier: Supplier) -> None:
+    """
+    Deletes a Supplier entity.
+    Foreign key references in Product are set to NULL (on_delete=models.SET_NULL).
+    """
+    supplier.delete()
+

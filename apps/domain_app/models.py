@@ -8,8 +8,106 @@ suitable for academic code defense and production-grade reliability.
 
 from decimal import Decimal
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import models
 from django.utils.text import slugify
+
+
+class Supplier(models.Model):
+    """
+    Vendor or manufacturer furnishing inventory stock products.
+
+    Database Integrity & Normalization:
+    - B-Tree indexes on `name` and `email` for rapid searching and sorting.
+    - Check constraint ensuring supplier name is non-empty.
+    - Email validation on model cleaning.
+    """
+    name = models.CharField(
+        max_length=200,
+        db_index=True,
+        help_text='Official company or business name of the supplier.',
+    )
+    contact_person = models.CharField(
+        max_length=150,
+        blank=True,
+        default='',
+        help_text='Primary contact representative or account manager.',
+    )
+    email = models.EmailField(
+        db_index=True,
+        help_text='Contact email address for procurement and inquiries.',
+    )
+    phone = models.CharField(
+        max_length=50,
+        help_text='Direct telephone or mobile contact number.',
+    )
+    address = models.TextField(
+        blank=True,
+        default='',
+        help_text='Physical office, factory, or warehouse dispatch address.',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text='Designates whether this supplier is active for inventory operations.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Supplier'
+        verbose_name_plural = 'Suppliers'
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['name'], name='idx_supplier_name'),
+            models.Index(fields=['email'], name='idx_supplier_email'),
+            models.Index(fields=['name', 'is_active'], name='idx_supplier_name_active'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(name__exact=''),
+                name='check_supplier_name_not_empty',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+    def clean(self):
+        """Model-level validation and string normalization."""
+        if self.name:
+            self.name = self.name.strip()
+            if not self.name:
+                raise ValidationError({'name': 'Supplier name cannot be empty or whitespace.'})
+        else:
+            raise ValidationError({'name': 'Supplier name is required.'})
+
+        if self.contact_person:
+            self.contact_person = self.contact_person.strip()
+
+        if self.phone:
+            self.phone = self.phone.strip()
+            if not self.phone:
+                raise ValidationError({'phone': 'Supplier phone number cannot be empty or whitespace.'})
+        else:
+            raise ValidationError({'phone': 'Supplier phone number is required.'})
+
+        if self.email:
+            self.email = self.email.strip().lower()
+            try:
+                validate_email(self.email)
+            except ValidationError as e:
+                raise ValidationError({'email': 'Enter a valid email address.'}) from e
+        else:
+            raise ValidationError({'email': 'Supplier email address is required.'})
+
+        if self.address:
+            self.address = self.address.strip()
+
+    def save(self, *args, **kwargs):
+        """Execute validation before committing to database."""
+        self.clean()
+        super().save(*args, **kwargs)
 
 
 class Category(models.Model):
@@ -117,6 +215,15 @@ class Product(models.Model):
         db_index=True,
         help_text='The classification group this product belongs to.',
     )
+    supplier = models.ForeignKey(
+        Supplier,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='products',
+        db_index=True,
+        help_text='Vendor or manufacturer supplying this product SKU.',
+    )
     price = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -144,6 +251,7 @@ class Product(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['category', 'is_active'], name='idx_prod_cat_active'),
+            models.Index(fields=['supplier'], name='idx_prod_supplier'),
             models.Index(fields=['name'], name='idx_prod_name'),
             models.Index(fields=['sku'], name='idx_prod_sku'),
             models.Index(fields=['-created_at'], name='idx_prod_created_at'),

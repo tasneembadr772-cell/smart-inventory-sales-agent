@@ -7,7 +7,73 @@ Provides HTML widget styling, validation error mapping, and form sanitation.
 from decimal import Decimal
 from django import forms
 from django.db import models
-from .models import Category, Product
+from .models import Category, Product, Supplier
+
+
+class SupplierForm(forms.ModelForm):
+    """Form for creating and updating Suppliers."""
+
+    class Meta:
+        model = Supplier
+        fields = [
+            'name',
+            'contact_person',
+            'email',
+            'phone',
+            'address',
+            'is_active',
+        ]
+        widgets = {
+            'name': forms.TextInput(attrs={
+                'class': 'form-input',
+                'placeholder': 'e.g., Apex Global Components Ltd.',
+                'required': True,
+                'autocomplete': 'off',
+            }),
+            'contact_person': forms.TextInput(attrs={
+                'class': 'form-input',
+                'placeholder': 'e.g., John Smith (Lead Account Executive)',
+                'autocomplete': 'off',
+            }),
+            'email': forms.EmailInput(attrs={
+                'class': 'form-input',
+                'placeholder': 'e.g., supplier@apexcomponents.com',
+                'required': True,
+                'autocomplete': 'off',
+            }),
+            'phone': forms.TextInput(attrs={
+                'class': 'form-input',
+                'placeholder': 'e.g., +1 (555) 234-5678',
+                'required': True,
+                'autocomplete': 'off',
+            }),
+            'address': forms.Textarea(attrs={
+                'class': 'form-textarea',
+                'rows': 3,
+                'placeholder': 'Factory, distribution warehouse, or physical address...',
+            }),
+            'is_active': forms.CheckboxInput(attrs={
+                'class': 'form-checkbox',
+            }),
+        }
+
+    def clean_name(self):
+        name = self.cleaned_data.get('name', '').strip()
+        if not name:
+            raise forms.ValidationError("Supplier name cannot be empty.")
+        return name
+
+    def clean_email(self):
+        email = self.cleaned_data.get('email', '').strip().lower()
+        if not email:
+            raise forms.ValidationError("Supplier email cannot be empty.")
+        return email
+
+    def clean_phone(self):
+        phone = self.cleaned_data.get('phone', '').strip()
+        if not phone:
+            raise forms.ValidationError("Supplier phone number cannot be empty.")
+        return phone
 
 
 class CategoryForm(forms.ModelForm):
@@ -56,6 +122,7 @@ class ProductForm(forms.ModelForm):
             'name',
             'sku',
             'category',
+            'supplier',
             'price',
             'stock_quantity',
             'reorder_level',
@@ -77,6 +144,9 @@ class ProductForm(forms.ModelForm):
             'category': forms.Select(attrs={
                 'class': 'form-select',
                 'required': True,
+            }),
+            'supplier': forms.Select(attrs={
+                'class': 'form-select',
             }),
             'price': forms.NumberInput(attrs={
                 'class': 'form-input',
@@ -119,6 +189,16 @@ class ProductForm(forms.ModelForm):
             )
         else:
             self.fields['category'].queryset = Category.objects.filter(is_active=True)
+
+        # Supplier choice configuration
+        self.fields['supplier'].required = False
+        self.fields['supplier'].empty_label = 'No Supplier (Direct / Internal)'
+        if self.instance.pk and self.instance.supplier_id:
+            self.fields['supplier'].queryset = Supplier.objects.filter(
+                models.Q(is_active=True) | models.Q(pk=self.instance.supplier_id)
+            )
+        else:
+            self.fields['supplier'].queryset = Supplier.objects.filter(is_active=True)
 
     def clean_sku(self):
         sku = self.cleaned_data.get('sku', '').strip().upper()
@@ -199,3 +279,31 @@ class ProductFilterForm(forms.Form):
             'id': 'statusFilterSelect',
         })
     )
+
+
+class SupplierFilterForm(forms.Form):
+    """GET Filter form for supplier catalog listings."""
+    STATUS_CHOICES = [
+        ('', 'All Statuses'),
+        ('active', 'Active Only'),
+        ('inactive', 'Inactive Only'),
+    ]
+
+    search = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'search-input',
+            'placeholder': 'Search by Name, Contact, Email, Phone...',
+            'autocomplete': 'off',
+            'id': 'supplierSearchInput',
+        })
+    )
+    status = forms.ChoiceField(
+        choices=STATUS_CHOICES,
+        required=False,
+        widget=forms.Select(attrs={
+            'class': 'filter-select',
+            'id': 'statusFilterSelect',
+        })
+    )
+
