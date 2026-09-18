@@ -86,6 +86,14 @@ def get_products_queryset(
             )
         elif status_key == 'in_stock':
             qs = qs.filter(stock_quantity__gt=F('reorder_level'))
+        elif status_key in ('attention', 'requiring_attention'):
+            if is_privileged:
+                qs = qs.filter(
+                    Q(stock_quantity__lte=F('reorder_level')) |
+                    Q(is_active=False, stock_quantity__gt=0)
+                )
+            else:
+                qs = qs.filter(stock_quantity__lte=F('reorder_level'))
 
     return qs
 
@@ -197,12 +205,30 @@ def get_supplier_kpis() -> Dict[str, Any]:
     )
 
 
-def get_inventory_kpis() -> Dict[str, Any]:
+def get_inventory_kpis(user=None) -> Dict[str, Any]:
     """
-    Calculates system-wide inventory KPI metrics using database aggregations.
+    Calculates system-wide inventory KPI metrics using single-query database aggregations.
     Guarantees O(1) single-query efficiency using database aggregate functions.
+
+    Respects Role-Based Access Control (RBAC):
+    - Standard users calculate metrics strictly across active catalog items.
+    - Managers / Admins / Superusers calculate across the entire inventory.
     """
-    aggregates = Product.objects.aggregate(
+    is_privileged = False
+    if user and user.is_authenticated:
+        is_privileged = user.is_superuser or getattr(user, 'role', '') in ('ADMIN', 'MANAGER')
+
+    base_qs = Product.objects.all()
+    if user and user.is_authenticated and not is_privileged:
+        base_qs = base_qs.filter(is_active=True)
+
+    # Calculate attention filter condition
+    if is_privileged:
+        attention_q = Q(stock_quantity__lte=F('reorder_level')) | Q(is_active=False, stock_quantity__gt=0)
+    else:
+        attention_q = Q(stock_quantity__lte=F('reorder_level'))
+
+    aggregates = base_qs.aggregate(
         total_products=Count('id'),
         active_products=Count('id', filter=Q(is_active=True)),
         low_stock_count=Count(
@@ -211,6 +237,7 @@ def get_inventory_kpis() -> Dict[str, Any]:
         ),
         out_of_stock_count=Count('id', filter=Q(stock_quantity=0)),
         total_reorder_needed=Count('id', filter=Q(stock_quantity__lte=F('reorder_level'))),
+        attention_count=Count('id', filter=attention_q),
         total_units=Coalesce(Sum('stock_quantity'), 0),
         total_valuation=Coalesce(
             Sum(F('stock_quantity') * F('price'), output_field=DecimalField()),
@@ -297,6 +324,87 @@ def get_out_of_stock_products(
     ).filter(stock_quantity=0)
 
 
+def get_products_requiring_attention(
+    user=None,
+    limit: Optional[int] = None,
+) -> list[Dict[str, Any]]:
+    """
+    Retrieves inventory products requiring immediate operational attention.
+    
+    Attention Criteria:
+    - CRITICAL: Out-of-stock products (stock == 0).
+    - WARNING: Low-stock products (0 < stock <= reorder_level).
+    - AUDIT: Inactive products with stranded physical stock (for Managers/Admins).
+
+    Guarantees N+1 prevention with `select_related('category', 'supplier')`.
+    Returns rich dictionary representations with deficit calculations and operational reasons.
+    """
+    is_privileged = False
+    if user and user.is_authenticated:
+        is_privileged = user.is_superuser or getattr(user, 'role', '') in ('ADMIN', 'MANAGER')
+
+    qs = Product.objects.select_related('category', 'supplier')
+
+    if not is_privileged:
+        # Standard users only see active products needing replenishment
+        attention_condition = Q(is_active=True, stock_quantity__lte=F('reorder_level'))
+    else:
+        # Elevated users also see inactive products with trapped physical stock
+        attention_condition = (
+            Q(stock_quantity__lte=F('reorder_level')) |
+            Q(is_active=False, stock_quantity__gt=0)
+        )
+
+    qs = qs.filter(attention_condition).order_by('stock_quantity', 'reorder_level', 'name')
+
+    if limit:
+        qs = qs[:limit]
+
+    attention_list = []
+    for p in qs:
+        deficit_to_reorder = max(0, p.reorder_level - p.stock_quantity)
+        target = p.target_stock_level if p.target_stock_level is not None else p.reorder_level * 2
+        deficit_to_target = max(0, target - p.stock_quantity)
+
+        if p.stock_quantity == 0:
+            urgency = 'CRITICAL'
+            urgency_label = 'Critical Out of Stock'
+            reason = 'Stock depleted. Immediate replenishment required.'
+        elif not p.is_active and p.stock_quantity > 0:
+            urgency = 'AUDIT'
+            urgency_label = 'Inactive With Stock'
+            reason = f'Inactive catalog SKU with {p.stock_quantity} stranded physical units.'
+        else:
+            urgency = 'WARNING'
+            urgency_label = 'Low Stock'
+            reason = f'Stock ({p.stock_quantity}) at or below reorder threshold ({p.reorder_level}).'
+
+        attention_list.append({
+            'product': p,
+            'product_id': p.pk,
+            'name': p.name,
+            'sku': p.sku,
+            'category': p.category,
+            'category_name': p.category.name if p.category else '',
+            'supplier': p.supplier,
+            'supplier_name': p.supplier.name if p.supplier else None,
+            'supplier_email': p.supplier.email if p.supplier else None,
+            'stock_quantity': p.stock_quantity,
+            'reorder_level': p.reorder_level,
+            'target_stock_level': p.target_stock_level,
+            'deficit_to_reorder': deficit_to_reorder,
+            'deficit_to_target': deficit_to_target,
+            'suggested_reorder_qty': deficit_to_target if deficit_to_target > 0 else (deficit_to_reorder + 10),
+            'price': p.price,
+            'urgency': urgency,
+            'urgency_label': urgency_label,
+            'reason': reason,
+            'is_active': p.is_active,
+        })
+
+    return attention_list
+
+
 def get_low_stock_report(
     user=None,
     category_id: Optional[int] = None,
@@ -355,7 +463,7 @@ def get_inventory_transactions_queryset(
     Prevents N+1 database queries through `select_related('product', 'created_by', 'product__category')`.
     """
     qs = InventoryTransaction.objects.select_related(
-        'product', 'created_by', 'product__category'
+        'product', 'created_by', 'product__category', 'product__supplier'
     ).all()
 
     if product_id:
