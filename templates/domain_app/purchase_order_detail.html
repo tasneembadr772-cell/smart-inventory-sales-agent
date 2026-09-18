@@ -1,0 +1,255 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Purchase Order {{ po.order_number }} | Procurement Details{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Header Section -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:purchase_order_list' %}">Purchase Orders</a>
+                <span class="sep">/</span>
+                <span class="current">{{ po.order_number }}</span>
+            </div>
+            <div class="title-with-badge">
+                <h1 class="page-title">{{ po.order_number }}</h1>
+                {% if po.status == 'DRAFT' %}
+                    <span class="badge badge-secondary badge-lg">Draft</span>
+                {% elif po.status == 'PENDING' %}
+                    <span class="badge badge-warning badge-lg">Pending Approval</span>
+                {% elif po.status == 'APPROVED' %}
+                    <span class="badge badge-info badge-lg">Approved</span>
+                {% elif po.status == 'RECEIVED' %}
+                    <span class="badge badge-success badge-lg">Received &amp; Stocked</span>
+                {% else %}
+                    <span class="badge badge-danger badge-lg">Cancelled</span>
+                {% endif %}
+            </div>
+            <p class="page-subtitle">Created on {{ po.created_at|date:"F d, Y at H:i" }} by {{ po.created_by.username|default:"System" }}</p>
+        </div>
+
+        <!-- Workflow Action Controls -->
+        <div class="header-actions">
+            <a href="{% url 'domain_app:purchase_order_list' %}" class="btn btn-secondary">
+                &larr; Back to List
+            </a>
+
+            <!-- RBAC Governed Actions: Manager / Admin Only -->
+            {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                {% if po.can_be_approved %}
+                <form method="post" action="{% url 'domain_app:purchase_order_approve' pk=po.pk %}" style="display:inline;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary" onclick="return confirm('Are you sure you want to approve this Purchase Order?');">
+                        <span class="btn-icon">✅</span> Approve Order
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if po.can_be_received %}
+                <form method="post" action="{% url 'domain_app:purchase_order_receive' pk=po.pk %}" style="display:inline;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-accent btn-receive" onclick="return confirm('Receive goods into warehouse inventory? This will automatically increment stock counts.');">
+                        <span class="btn-icon">📥</span> Receive Goods &amp; Update Stock
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if po.can_be_cancelled %}
+                <button type="button" class="btn btn-danger" onclick="document.getElementById('cancelModal').style.display='flex';">
+                    <span class="btn-icon">🚫</span> Cancel Order
+                </button>
+                {% endif %}
+
+                {% if po.status == 'DRAFT' or po.status == 'CANCELLED' %}
+                <form method="post" action="{% url 'domain_app:purchase_order_delete' pk=po.pk %}" style="display:inline;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-ghost text-danger" onclick="return confirm('Permanently delete this purchase order? This cannot be undone.');">
+                        <span class="btn-icon">🗑️</span> Delete
+                    </button>
+                </form>
+                {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Order Metadata & Supplier Overview Cards -->
+    <div class="detail-grid">
+        <div class="detail-card card">
+            <h2 class="card-title">Supplier Details</h2>
+            <div class="info-list">
+                <div class="info-item">
+                    <span class="info-label">Vendor Company</span>
+                    <span class="info-value font-bold">
+                        <a href="{% url 'domain_app:supplier_detail' pk=po.supplier.pk %}" class="text-primary hover:underline">
+                            {{ po.supplier.name }}
+                        </a>
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Contact Representative</span>
+                    <span class="info-value">{{ po.supplier.contact_person|default:"Not specified" }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Contact Email</span>
+                    <span class="info-value">
+                        <a href="mailto:{{ po.supplier.email }}" class="text-primary hover:underline">{{ po.supplier.email }}</a>
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Phone</span>
+                    <span class="info-value">{{ po.supplier.phone }}</span>
+                </div>
+                {% if po.supplier.address %}
+                <div class="info-item">
+                    <span class="info-label">Dispatch Address</span>
+                    <span class="info-value text-muted">{{ po.supplier.address }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="detail-card card">
+            <h2 class="card-title">Order Logistics &amp; Financials</h2>
+            <div class="info-list">
+                <div class="info-item">
+                    <span class="info-label">Total Procurement Value</span>
+                    <span class="info-value font-bold text-accent text-xl">${{ po.total_amount|floatformat:2 }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Order Date</span>
+                    <span class="info-value">{{ po.order_date|date:"F d, Y" }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Expected Delivery</span>
+                    <span class="info-value">
+                        {% if po.expected_delivery_date %}
+                            {{ po.expected_delivery_date|date:"F d, Y" }}
+                        {% else %}
+                            <span class="text-muted">Unspecified</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Quantity Ordered</span>
+                    <span class="info-value font-bold">{{ po.total_items_count }} physical units ({{ items|length }} SKU types)</span>
+                </div>
+                {% if po.notes %}
+                <div class="info-item">
+                    <span class="info-label">Procurement Notes</span>
+                    <span class="info-value text-muted">{{ po.notes }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Line Items Table -->
+    <div class="card mt-4">
+        <div class="card-header-bar">
+            <h2 class="card-title">Ordered Products &amp; Costs</h2>
+            <span class="text-muted text-sm">{{ items|length }} SKU(s) included</span>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Product / SKU</th>
+                        <th>Category</th>
+                        <th class="text-right">Unit Cost</th>
+                        <th class="text-right">Quantity</th>
+                        <th class="text-right">Subtotal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>
+                            <div class="cell-main">
+                                <a href="{% url 'domain_app:product_detail' pk=item.product.pk %}" class="text-primary hover:underline">
+                                    {{ item.product.name }}
+                                </a>
+                            </div>
+                            <div class="cell-sub font-mono text-muted">{{ item.product.sku }}</div>
+                        </td>
+                        <td>
+                            <span class="badge badge-secondary">{{ item.product.category.name }}</span>
+                        </td>
+                        <td class="text-right font-mono">${{ item.unit_cost|floatformat:2 }}</td>
+                        <td class="text-right font-bold">{{ item.quantity }}</td>
+                        <td class="text-right font-mono font-bold text-accent">${{ item.subtotal|floatformat:2 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="table-summary-row">
+                        <td colspan="4" class="text-right font-bold">Grand Total:</td>
+                        <td class="text-right font-bold">{{ po.total_items_count }} units</td>
+                        <td class="text-right font-bold text-accent font-mono text-lg">${{ po.total_amount|floatformat:2 }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- Goods Intake Audit Ledger Linked to this PO -->
+    {% if inventory_transactions %}
+    <div class="card mt-4">
+        <div class="card-header-bar">
+            <h2 class="card-title">Inventory Intake Audit Ledger</h2>
+            <span class="badge badge-success">Automated Stock Movements</span>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>SKU</th>
+                        <th>Movement Type</th>
+                        <th>Units Added</th>
+                        <th>Stock Transition</th>
+                        <th>Ledger Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tx in inventory_transactions %}
+                    <tr>
+                        <td>{{ tx.created_at|date:"Y-m-d H:i:s" }}</td>
+                        <td class="font-mono font-bold">{{ tx.product.sku }}</td>
+                        <td><span class="badge badge-success">Stock Added</span></td>
+                        <td class="font-bold text-accent">+{{ tx.quantity }}</td>
+                        <td class="font-mono">{{ tx.previous_stock }} &rarr; {{ tx.new_stock }} units</td>
+                        <td class="text-muted">{{ tx.notes }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Cancel Modal -->
+<div id="cancelModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-box card">
+        <h2 class="card-title text-danger">Cancel Purchase Order</h2>
+        <p class="text-secondary mt-2">Are you sure you want to cancel this purchase order? Please state a reason for accounting records.</p>
+        <form method="post" action="{% url 'domain_app:purchase_order_cancel' pk=po.pk %}" class="mt-3">
+            {% csrf_token %}
+            <div class="form-field">
+                <label for="cancelReason" class="form-label">Cancellation Reason</label>
+                <textarea name="reason" id="cancelReason" rows="3" class="form-textarea" placeholder="e.g. Supplier pricing change / discontinued SKU" required></textarea>
+            </div>
+            <div class="form-actions-bar mt-4">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('cancelModal').style.display='none';">Dismiss</button>
+                <button type="submit" class="btn btn-danger">Confirm Cancellation</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

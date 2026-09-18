@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction, models
 from django.utils import timezone
 
-from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 
 _UNSET = object()
 
@@ -158,7 +158,7 @@ def record_stock_movement(
 ) -> InventoryTransaction:
     """
     Executes an atomic, concurrency-safe stock movement with audit logging.
-    
+
     Guarantees:
     - ACID transaction: Locks the product row via `select_for_update()`.
     - Non-negative invariant: Rejects removals or adjustments producing negative stock.
@@ -642,5 +642,227 @@ def create_sale(
             )
 
     return sale
+
+
+# ==============================================================================
+# Purchase Order Service Operations
+# ==============================================================================
+
+class PurchaseOrderError(DomainServiceError, ValidationError):
+    """Raised when purchase order validation or business invariant fails."""
+    pass
+
+
+def generate_po_identifier() -> str:
+    """
+    Generates a human-readable, unique purchase order identifier.
+    Format: PO-YYYYMMDD-XXXX (e.g., PO-20260918-A7B2C1).
+    """
+    date_str = timezone.now().strftime('%Y%m%d')
+    unique_suffix = uuid.uuid4().hex[:6].upper()
+    return f"PO-{date_str}-{unique_suffix}"
+
+
+@transaction.atomic
+def create_purchase_order(
+    *,
+    supplier: Supplier,
+    items_data: List[Dict[str, Any]],
+    status: str = PurchaseOrder.Status.DRAFT,
+    notes: str = "",
+    user=None,
+) -> PurchaseOrder:
+    """
+    Creates and records a commercial purchase order transaction.
+
+    Business Rules & Invariants:
+    1. Validation of supplier and non-empty items payload.
+    2. Prevention of duplicate items for the same product.
+    3. Backend Calculation of Totals:
+       - Evaluates line item subtotals as `Decimal(quantity) * Decimal(unit_cost)`.
+       - Aggregates overall `total_amount` safely on the backend.
+    """
+    if not items_data or len(items_data) == 0:
+        raise PurchaseOrderError({'items': 'At least one line item is required to create a purchase order.'})
+
+    order_number = None
+    for _ in range(5):
+        candidate_id = generate_po_identifier()
+        if not PurchaseOrder.objects.filter(order_number=candidate_id).exists():
+            order_number = candidate_id
+            break
+    if not order_number:
+        order_number = f"PO-{int(timezone.now().timestamp())}"
+
+    product_quantities: Dict[int, int] = {}
+    unit_costs: Dict[int, Decimal] = {}
+
+    for index, item in enumerate(items_data):
+        product_id = item.get('product_id') or (item.get('product').pk if isinstance(item.get('product'), Product) else None)
+        if not product_id:
+            raise PurchaseOrderError({'items': f"Line item #{index + 1} does not specify a valid product."})
+
+        try:
+            qty = int(item.get('quantity', 0))
+        except (ValueError, TypeError):
+            raise PurchaseOrderError({'items': f"Line item #{index + 1} quantity must be an integer."})
+
+        if qty <= 0:
+            raise PurchaseOrderError({'items': f"Quantity for product must be greater than zero (Item #{index + 1})."})
+
+        if product_id in product_quantities:
+            raise PurchaseOrderError({
+                'items': f"Duplicate product line item detected. Please consolidate quantities for the same SKU."
+            })
+
+        product_quantities[product_id] = qty
+
+        unit_cost_val = item.get('unit_cost')
+        if unit_cost_val is None:
+            raise PurchaseOrderError({'items': f"Unit cost is required for item #{index + 1}."})
+
+        try:
+            dec_cost = Decimal(str(unit_cost_val))
+            if dec_cost < Decimal('0.00'):
+                raise PurchaseOrderError({'items': f"Unit cost cannot be negative (Item #{index + 1})."})
+            unit_costs[product_id] = dec_cost
+        except Exception:
+            raise PurchaseOrderError({'items': f"Invalid unit cost provided for item #{index + 1}."})
+
+    products_qs = Product.objects.filter(pk__in=list(product_quantities.keys()))
+    products_map = {p.pk: p for p in products_qs}
+
+    for pid in product_quantities:
+        if pid not in products_map:
+            raise PurchaseOrderError({'items': f"Product with ID {pid} was not found."})
+
+    line_items_to_create = []
+    total_amount = Decimal('0.00')
+
+    for pid, qty in product_quantities.items():
+        product = products_map[pid]
+        unit_cost = unit_costs[pid]
+        line_subtotal = Decimal(str(qty)) * unit_cost
+        total_amount += line_subtotal
+
+        line_items_to_create.append({
+            'product': product,
+            'quantity': qty,
+            'unit_cost': unit_cost,
+            'subtotal': line_subtotal,
+        })
+
+    po = PurchaseOrder(
+        order_number=order_number,
+        supplier=supplier,
+        status=status,
+        total_amount=total_amount,
+        notes=notes.strip() if notes else "",
+        created_by=user if user and user.is_authenticated else None,
+    )
+    po.full_clean()
+    po.save()
+
+    for item_info in line_items_to_create:
+        PurchaseOrderItem.objects.create(
+            purchase_order=po,
+            product=item_info['product'],
+            quantity=item_info['quantity'],
+            unit_cost=item_info['unit_cost'],
+            subtotal=item_info['subtotal'],
+        )
+
+    return po
+@transaction.atomic
+def update_purchase_order_status(
+    po: PurchaseOrder,
+    new_status: str,
+    user=None
+) -> PurchaseOrder:
+    """
+    Update Purchase Order status following the allowed lifecycle.
+
+    Draft -> Pending -> Approved -> Received
+    Draft/Pending/Approved -> Cancelled
+
+    When an order becomes Received, inventory is updated atomically.
+    """
+
+    if po.status == new_status:
+        return po
+
+    allowed_transitions = {
+        PurchaseOrder.Status.DRAFT: {
+            PurchaseOrder.Status.PENDING,
+            PurchaseOrder.Status.CANCELLED,
+        },
+        PurchaseOrder.Status.PENDING: {
+            PurchaseOrder.Status.APPROVED,
+            PurchaseOrder.Status.CANCELLED,
+        },
+        PurchaseOrder.Status.APPROVED: {
+            PurchaseOrder.Status.RECEIVED,
+            PurchaseOrder.Status.CANCELLED,
+        },
+        PurchaseOrder.Status.RECEIVED: set(),
+        PurchaseOrder.Status.CANCELLED: set(),
+    }
+
+    if new_status not in PurchaseOrder.Status.values:
+        raise PurchaseOrderError("Invalid purchase order status.")
+
+    if new_status not in allowed_transitions.get(po.status, set()):
+        raise PurchaseOrderError(
+            f"Cannot change purchase order status from "
+            f"{po.get_status_display()} to "
+            f"{po.__class__.Status(new_status).label}."
+        )
+
+    if new_status == PurchaseOrder.Status.RECEIVED:
+        po_items = po.items.all().select_related('product')
+        product_ids = [item.product_id for item in po_items]
+
+        locked_products = (
+            Product.objects
+            .select_for_update()
+            .filter(pk__in=product_ids)
+        )
+
+        locked_products_map = {
+            product.pk: product
+            for product in locked_products
+        }
+
+        for item in po_items:
+            product = locked_products_map[item.product_id]
+
+            previous_stock = product.stock_quantity
+            new_stock = previous_stock + item.quantity
+
+            product.stock_quantity = new_stock
+            product.full_clean()
+            product.save(update_fields=['stock_quantity', 'updated_at'])
+
+            InventoryTransaction.objects.create(
+                product=product,
+                transaction_type=InventoryTransaction.TransactionType.ADD,
+                quantity=item.quantity,
+                previous_stock=previous_stock,
+                new_stock=new_stock,
+                reference=po.order_number,
+                notes=(
+                    f"Purchase order received: "
+                    f"{item.quantity} units from {po.supplier.name}."
+                ),
+                created_by=(
+                    user if user and user.is_authenticated else None
+                ),
+            )
+
+    po.status = new_status
+    po.full_clean()
+    po.save(update_fields=['status', 'updated_at'])
+
+    return po
 
 

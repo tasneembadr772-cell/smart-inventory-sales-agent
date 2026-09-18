@@ -40,5 +40,10 @@ urlpatterns = [
     path('sales/', views.sale_list, name='sale_list'),
     path('sales/create/', views.sale_create, name='sale_create'),
     path('sales/<int:pk>/', views.sale_detail, name='sale_detail'),
-]
 
+    # Purchase Order Endpoints
+    path('purchase-orders/', views.purchase_order_list, name='po_list'),
+    path('purchase-orders/create/', views.purchase_order_create, name='po_create'),
+    path('purchase-orders/<int:pk>/', views.purchase_order_detail, name='po_detail'),
+    path('purchase-orders/<int:pk>/update-status/', views.purchase_order_update_status, name='po_update_status'),
+]

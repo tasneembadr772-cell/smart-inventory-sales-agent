@@ -12,7 +12,7 @@ from django.db.models import QuerySet, Q, F, Count, Sum, Value, DecimalField
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 
-from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 
 
 def get_products_queryset(
@@ -262,10 +262,10 @@ def get_low_stock_products(
 ) -> QuerySet[Product]:
     """
     Retrieves inventory products where current stock is at or below the reorder level.
-    
+
     Business Rule:
     A product is low-stock when current quantity <= reorder level.
-    
+
     Reusable by the AI Agent for inventory monitoring, low-stock notifications,
     and replenishment planning.
     """
@@ -330,7 +330,7 @@ def get_products_requiring_attention(
 ) -> list[Dict[str, Any]]:
     """
     Retrieves inventory products requiring immediate operational attention.
-    
+
     Attention Criteria:
     - CRITICAL: Out-of-stock products (stock == 0).
     - WARNING: Low-stock products (0 < stock <= reorder_level).
@@ -570,7 +570,7 @@ def get_sales_summary_kpis() -> Dict[str, Any]:
     """
     total_sales_count = Sale.objects.count()
     completed_sales = Sale.objects.filter(status=Sale.Status.COMPLETED)
-    
+
     completed_count = completed_sales.count()
     total_revenue = completed_sales.aggregate(
         rev=Coalesce(Sum('total_amount'), Value(Decimal('0.00'), output_field=DecimalField()))
@@ -589,5 +589,76 @@ def get_sales_summary_kpis() -> Dict[str, Any]:
         'total_units_sold': total_units_sold,
     }
 
+
+
+# ==============================================================================
+# Purchase Order Query Selectors
+# ==============================================================================
+
+def get_purchase_orders_queryset(
+    user=None,
+    search: Optional[str] = None,
+    status_filter: Optional[str] = None,
+) -> QuerySet[PurchaseOrder]:
+    """
+    Retrieves filtered and optimized QuerySet of purchase orders.
+    Prevents N+1 queries by using select_related and prefetch_related.
+    """
+    qs = PurchaseOrder.objects.select_related('supplier', 'created_by').prefetch_related(
+        'items',
+        'items__product',
+    ).all()
+
+    if search:
+        term = search.strip()
+        if term:
+            qs = qs.filter(
+                Q(order_number__icontains=term) |
+                Q(supplier__name__icontains=term)
+            )
+
+    if status_filter:
+        stat_clean = status_filter.strip().upper()
+        if stat_clean in PurchaseOrder.Status.values:
+            qs = qs.filter(status=stat_clean)
+
+    return qs.order_by('-order_date', '-created_at')
+
+
+def get_purchase_order_by_id(po_id: int) -> PurchaseOrder:
+    """
+    Fetches a single Purchase Order by primary key with all associated line items.
+    """
+    return get_object_or_404(
+        PurchaseOrder.objects.select_related('supplier', 'created_by').prefetch_related(
+            'items',
+            'items__product',
+            'items__product__category',
+        ),
+        pk=po_id,
+    )
+
+
+def get_purchase_order_kpis() -> Dict[str, Any]:
+    """
+    Aggregates headline financial and order KPIs for purchase orders.
+    """
+    pos = PurchaseOrder.objects.all()
+    received_pos = pos.filter(status=PurchaseOrder.Status.RECEIVED)
+
+    total_count = pos.count()
+    received_count = received_pos.count()
+    pending_count = pos.filter(status=PurchaseOrder.Status.PENDING).count()
+
+    total_spent = received_pos.aggregate(
+        spent=Coalesce(Sum('total_amount'), Value(Decimal('0.00'), output_field=DecimalField()))
+    )['spent']
+
+    return {
+        'total_count': total_count,
+        'received_count': received_count,
+        'pending_count': pending_count,
+        'total_spent': total_spent,
+    }
 
 
