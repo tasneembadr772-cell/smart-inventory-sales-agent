@@ -1355,3 +1355,168 @@ class InventoryViewsAndRBACTestCase(TestCase):
         self.assertEqual(self.product.stock_quantity, 42)
 
 
+class InventoryDashboardPolishTests(TestCase):
+    """
+    Unit and integration tests for the polished Inventory Dashboard.
+    Validates O(1) KPI queries, attention logic, RBAC visibility, and template context.
+    """
+
+    def setUp(self):
+        self.category = Category.objects.create(name='Computing Hardware', slug='computing-hardware')
+        self.supplier = Supplier.objects.create(
+            name='Apex Systems',
+            email='sales@apex.com',
+            phone='+1-555-0100',
+        )
+
+        # Diverse products in different inventory health states
+        self.p_instock = Product.objects.create(
+            name='Enterprise Server Blade',
+            sku='SRV-BLADE-01',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('1200.00'),
+            stock_quantity=50,
+            reorder_level=10,
+            target_stock_level=80,
+            is_active=True,
+        )
+        self.p_lowstock = Product.objects.create(
+            name='Dual Port 10GbE NIC',
+            sku='NIC-10G-02',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('180.00'),
+            stock_quantity=3,
+            reorder_level=8,
+            target_stock_level=20,
+            is_active=True,
+        )
+        self.p_outofstock = Product.objects.create(
+            name='Hot Swap Power Supply 850W',
+            sku='PSU-850-HS',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('220.00'),
+            stock_quantity=0,
+            reorder_level=5,
+            target_stock_level=15,
+            is_active=True,
+        )
+        self.p_inactive_stock = Product.objects.create(
+            name='Legacy SAS Controller',
+            sku='SAS-CTRL-OLD',
+            category=self.category,
+            supplier=self.supplier,
+            price=Decimal('50.00'),
+            stock_quantity=12,
+            reorder_level=4,
+            is_active=False,
+        )
+
+        # Users
+        self.admin = User.objects.create_user(
+            username='admin_inventory',
+            email='admin@nexus.com',
+            password='Password123!',
+            role=User.Role.ADMIN,
+        )
+        self.standard_user = User.objects.create_user(
+            username='standard_staff',
+            email='staff@nexus.com',
+            password='Password123!',
+            role=User.Role.STANDARD,
+        )
+
+        # Record a stock movement
+        InventoryTransaction.objects.create(
+            product=self.p_instock,
+            transaction_type=InventoryTransaction.TransactionType.ADD,
+            quantity=20,
+            previous_stock=30,
+            new_stock=50,
+            reference='PO-2026-TEST',
+            notes='Initial intake verification',
+            created_by=self.admin,
+        )
+
+    def test_kpi_aggregation_rbac_and_accuracy(self):
+        """KPIs correctly aggregate counts and valuations, separating standard and elevated views."""
+        admin_kpis = selectors.get_inventory_kpis(user=self.admin)
+        self.assertEqual(admin_kpis['total_products'], 4)
+        self.assertEqual(admin_kpis['active_products'], 3)
+        self.assertEqual(admin_kpis['low_stock_count'], 1)
+        self.assertEqual(admin_kpis['out_of_stock_count'], 1)
+        self.assertEqual(admin_kpis['attention_count'], 3)  # low stock + out of stock + inactive with stock
+        self.assertEqual(admin_kpis['total_stock'], 65)     # 50 + 3 + 0 + 12
+        self.assertEqual(admin_kpis['total_units'], 65)
+
+        standard_kpis = selectors.get_inventory_kpis(user=self.standard_user)
+        self.assertEqual(standard_kpis['total_products'], 3) # inactive excluded
+        self.assertEqual(standard_kpis['attention_count'], 2) # low stock + out of stock
+        self.assertEqual(standard_kpis['total_stock'], 53)    # 50 + 3 + 0 (excludes 12 inactive)
+
+    def test_products_requiring_attention_selector(self):
+        """Attention selector correctly assigns severity, deficits, and obeys RBAC."""
+        # Standard user attention list
+        std_attention = selectors.get_products_requiring_attention(user=self.standard_user)
+        self.assertEqual(len(std_attention), 2)
+        std_skus = [x['sku'] for x in std_attention]
+        self.assertIn('PSU-850-HS', std_skus)
+        self.assertIn('NIC-10G-02', std_skus)
+        self.assertNotIn('SAS-CTRL-OLD', std_skus)
+
+        # Admin attention list
+        adm_attention = selectors.get_products_requiring_attention(user=self.admin)
+        self.assertEqual(len(adm_attention), 3)
+        adm_skus = [x['sku'] for x in adm_attention]
+        self.assertIn('SAS-CTRL-OLD', adm_skus)
+
+        # Verify urgency and deficit calculations
+        out_item = next(x for x in adm_attention if x['sku'] == 'PSU-850-HS')
+        self.assertEqual(out_item['urgency'], 'CRITICAL')
+        self.assertEqual(out_item['deficit_to_reorder'], 5)
+
+        low_item = next(x for x in adm_attention if x['sku'] == 'NIC-10G-02')
+        self.assertEqual(low_item['urgency'], 'WARNING')
+        self.assertEqual(low_item['deficit_to_reorder'], 5)  # 8 - 3
+
+        audit_item = next(x for x in adm_attention if x['sku'] == 'SAS-CTRL-OLD')
+        self.assertEqual(audit_item['urgency'], 'AUDIT')
+
+    def test_inventory_dashboard_view_authenticated(self):
+        """Dashboard renders HTTP 200 with complete context and respects user permissions."""
+        self.client.force_login(self.standard_user)
+        response = self.client.get(reverse('domain_app:inventory_dashboard'))
+        self.assertEqual(response.status_code, 200)
+
+        # Verify context contents
+        self.assertIn('kpis', response.context)
+        self.assertIn('attention_items', response.context)
+        self.assertIn('recent_transactions', response.context)
+        self.assertIn('products', response.context)
+
+        # Standard user should not see Add Product button or stock adjustment modal
+        self.assertNotContains(response, '⚡ Restock')
+        self.assertNotContains(response, 'id="stockAdjustmentModal"')
+
+        # Login as admin
+        self.client.force_login(self.admin)
+        admin_response = self.client.get(reverse('domain_app:inventory_dashboard'))
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertContains(admin_response, '⚡ Restock')
+        self.assertContains(admin_response, 'id="stockAdjustmentModal"')
+
+    def test_filter_by_attention_status(self):
+        """Filtering by stock_status=attention returns only products needing attention."""
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse('domain_app:inventory_dashboard') + '?stock_status=attention')
+        self.assertEqual(response.status_code, 200)
+        products = response.context['products']
+        skus = [p.sku for p in products]
+        self.assertIn('PSU-850-HS', skus)
+        self.assertIn('NIC-10G-02', skus)
+        self.assertNotIn('SRV-BLADE-01', skus)
+
+
+

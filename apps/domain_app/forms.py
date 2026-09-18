@@ -335,9 +335,10 @@ class ProductFilterForm(forms.Form):
     """GET Filter form for product listings."""
     STOCK_STATUS_CHOICES = [
         ('', 'All Stock Levels'),
-        ('in_stock', 'In Stock'),
+        ('attention', '⚠️ Requiring Attention'),
         ('low_stock', 'Low Stock Alert'),
         ('out_of_stock', 'Out of Stock'),
+        ('in_stock', 'In Stock'),
     ]
 
     STATUS_CHOICES = [

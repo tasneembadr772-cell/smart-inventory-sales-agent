@@ -350,6 +350,43 @@ function initStockAdjustmentModal() {
                     }
                 }
 
+                // Update attention queue row if present
+                const attentionRow = document.getElementById(`attention-row-${data.product_id}`);
+                if (attentionRow) {
+                    if (!data.is_low_stock && !data.is_out_of_stock) {
+                        attentionRow.style.transition = 'all 0.4s ease';
+                        attentionRow.style.opacity = '0';
+                        attentionRow.style.transform = 'translateX(20px)';
+                        setTimeout(() => {
+                            attentionRow.remove();
+                            const tbody = document.querySelector('.attention-table tbody');
+                            if (tbody && tbody.children.length === 0) {
+                                const card = document.querySelector('.attention-card');
+                                if (card) {
+                                    const tableContainer = card.querySelector('.attention-table-container');
+                                    if (tableContainer) {
+                                        tableContainer.outerHTML = `
+                                            <div class="attention-healthy-banner" role="status">
+                                                <div class="healthy-icon" aria-hidden="true">🎉</div>
+                                                <div class="healthy-content">
+                                                    <h3 class="healthy-title">Optimal Inventory Health</h3>
+                                                    <p class="healthy-desc">All catalog products currently maintain healthy physical stock levels above their reorder thresholds. No immediate procurement or audit actions are required.</p>
+                                                </div>
+                                            </div>
+                                        `;
+                                    }
+                                }
+                            }
+                        }, 400);
+                    } else {
+                        const qtySpan = attentionRow.querySelector('.stock-qty-display');
+                        if (qtySpan) {
+                            qtySpan.textContent = data.new_stock;
+                            qtySpan.className = `stock-qty-display font-bold ${data.is_out_of_stock ? 'text-danger' : 'text-warning'}`;
+                        }
+                    }
+                }
+
                 // Update low stock queue row if present
                 const lowStockRow = document.getElementById(`low-stock-row-${data.product_id}`);
                 if (lowStockRow) {
@@ -367,10 +404,22 @@ function initStockAdjustmentModal() {
                     const kpiUnits = document.getElementById('kpiTotalUnits');
                     const kpiLow = document.getElementById('kpiLowStockCount');
                     const kpiOut = document.getElementById('kpiOutOfStockCount');
+                    const kpiAttention = document.getElementById('kpiAttentionCount');
+                    const kpiValuation = document.getElementById('kpiTotalValuation');
+                    const attentionPill = document.querySelector('.attention-counter-pill');
 
-                    if (kpiUnits) kpiUnits.textContent = data.kpis.total_units;
-                    if (kpiLow) kpiLow.textContent = data.kpis.low_stock_count;
-                    if (kpiOut) kpiOut.textContent = data.kpis.out_of_stock_count;
+                    if (kpiUnits && data.kpis.total_units !== undefined) kpiUnits.textContent = data.kpis.total_units;
+                    if (kpiLow && data.kpis.low_stock_count !== undefined) kpiLow.textContent = data.kpis.low_stock_count;
+                    if (kpiOut && data.kpis.out_of_stock_count !== undefined) kpiOut.textContent = data.kpis.out_of_stock_count;
+                    if (kpiAttention && data.kpis.attention_count !== undefined) kpiAttention.textContent = data.kpis.attention_count;
+                    if (kpiValuation && data.kpis.total_valuation !== undefined) {
+                        kpiValuation.textContent = '$' + Number(data.kpis.total_valuation).toFixed(2);
+                    }
+                    if (attentionPill) {
+                        const cnt = data.kpis.attention_count || 0;
+                        attentionPill.textContent = `${cnt} Action${cnt === 1 ? '' : 's'} Needed`;
+                        attentionPill.style.display = cnt > 0 ? 'inline-flex' : 'none';
+                    }
                 }
 
                 // If on product detail page, refresh after a brief delay so transaction ledger renders

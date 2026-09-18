@@ -64,7 +64,7 @@ def product_list(request):
     page_obj = paginator.get_page(page_number)
 
     # Inventory KPIs for metric summary cards
-    kpis = selectors.get_inventory_kpis()
+    kpis = selectors.get_inventory_kpis(user=request.user)
     categories = selectors.get_categories_queryset(include_inactive=False)
 
     context = {
@@ -515,13 +515,16 @@ def inventory_dashboard(request):
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
 
-    # Inventory KPIs (O(1) database aggregation)
-    kpis = selectors.get_inventory_kpis()
+    # Inventory KPIs (O(1) database aggregation respecting user permissions)
+    kpis = selectors.get_inventory_kpis(user=request.user)
+
+    # Products requiring urgent operational attention (out-of-stock, critical reorders, dead stock)
+    attention_items = selectors.get_products_requiring_attention(user=request.user, limit=8)
 
     # Reusable low-stock query (top critical items)
     low_stock_items = selectors.get_low_stock_products(user=request.user, include_out_of_stock=True)[:8]
 
-    # Recent stock transaction audit ledger
+    # Recent stock transaction audit ledger (latest 10 movements)
     recent_transactions = selectors.get_inventory_transactions_queryset(user=request.user)[:10]
 
     categories = selectors.get_categories_queryset(include_inactive=False)
@@ -532,6 +535,7 @@ def inventory_dashboard(request):
         'products': page_obj.object_list,
         'filter_form': filter_form,
         'kpis': kpis,
+        'attention_items': attention_items,
         'low_stock_items': low_stock_items,
         'recent_transactions': recent_transactions,
         'categories': categories,
@@ -568,7 +572,7 @@ def low_stock_list(request):
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
 
-    kpis = selectors.get_inventory_kpis()
+    kpis = selectors.get_inventory_kpis(user=request.user)
     categories = selectors.get_categories_queryset(include_inactive=False)
     suppliers = selectors.get_suppliers_queryset(user=request.user, include_inactive=False)
 
@@ -686,7 +690,7 @@ def stock_adjustment(request, pk: int):
                 messages.success(request, msg)
 
                 if is_ajax:
-                    kpis = selectors.get_inventory_kpis()
+                    kpis = selectors.get_inventory_kpis(user=request.user)
                     return JsonResponse({
                         'success': True,
                         'message': msg,
@@ -737,7 +741,7 @@ def api_low_stock(request):
     Directly reusable by the AI Agent and frontend dynamic widgets.
     """
     report = selectors.get_low_stock_report(user=request.user, include_out_of_stock=True)
-    kpis = selectors.get_inventory_kpis()
+    kpis = selectors.get_inventory_kpis(user=request.user)
     return JsonResponse({
         'status': 'success',
         'count': len(report),

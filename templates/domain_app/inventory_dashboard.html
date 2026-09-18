@@ -1,180 +1,270 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Inventory & Low-Stock Hub | NexusERP{% endblock %}
+{% block title %}Inventory & Stock Health Dashboard | NexusERP{% endblock %}
 
 {% block content %}
 <div class="inventory-container">
     <!-- Page Header & Action Controls -->
-    <div class="page-header">
+    <header class="page-header" role="banner">
         <div class="header-content">
-            <div class="breadcrumb-trail">
+            <nav class="breadcrumb-trail" aria-label="Breadcrumb">
                 <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
-                <span class="sep">/</span>
+                <span class="sep" aria-hidden="true">/</span>
                 <span class="current">Inventory Hub</span>
-            </div>
-            <h1 class="page-title">Inventory & Stock Health Hub</h1>
-            <p class="page-subtitle">Track physical stock, automated low-stock detection, deficit calculations, and audit history.</p>
+            </nav>
+            <h1 class="page-title">Inventory &amp; Stock Health Dashboard</h1>
+            <p class="page-subtitle">Real-time inventory intelligence, automated low-stock detection, deficit calculations, and stock movement audit trails.</p>
         </div>
         <div class="header-actions">
-            <a href="{% url 'domain_app:low_stock_list' %}" class="btn btn-warning">
+            <a href="{% url 'domain_app:low_stock_list' %}" class="btn btn-warning" title="View dedicated low-stock replenishment queue">
                 <span class="btn-icon">⚠️</span> Low Stock Alerts ({{ kpis.total_reorder_needed|default:0 }})
             </a>
-            <a href="{% url 'domain_app:inventory_transactions' %}" class="btn btn-secondary">
+            <a href="{% url 'domain_app:inventory_transactions' %}" class="btn btn-secondary" title="View all stock movements and audit log">
                 <span class="btn-icon">📜</span> Audit Ledger
             </a>
-            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary">
+            <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary" title="View all catalog products">
                 <span class="btn-icon">📦</span> All Products
             </a>
             {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
-            <a href="{% url 'domain_app:product_create' %}" class="btn btn-primary">
+            <a href="{% url 'domain_app:product_create' %}" class="btn btn-primary" title="Create a new inventory SKU">
                 <span class="btn-icon">➕</span> Add Product
             </a>
             {% endif %}
         </div>
-    </div>
+    </header>
 
     <!-- Inventory Health KPI Cards (O(1) Single Aggregation) -->
-    <div class="kpi-grid">
-        <div class="kpi-card">
-            <div class="kpi-icon icon-blue">📦</div>
-            <div class="kpi-data">
-                <span class="kpi-label">Total SKUs</span>
-                <span class="kpi-value" id="kpiTotalProducts">{{ kpis.total_products|default:0 }}</span>
-            </div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-icon icon-purple">📊</div>
-            <div class="kpi-data">
-                <span class="kpi-label">Total Stock Units</span>
-                <span class="kpi-value" id="kpiTotalUnits">{{ kpis.total_units|default:0 }}</span>
-            </div>
-        </div>
-        <a href="{% url 'domain_app:low_stock_list' %}" class="kpi-card {% if kpis.low_stock_count > 0 %}kpi-warning{% endif %}" style="text-decoration: none; color: inherit;">
-            <div class="kpi-icon icon-yellow">⚠️</div>
-            <div class="kpi-data">
-                <span class="kpi-label">Low Stock Alerts</span>
-                <span class="kpi-value" id="kpiLowStockCount">{{ kpis.low_stock_count|default:0 }}</span>
-            </div>
-        </a>
-        <a href="{% url 'domain_app:low_stock_list' %}" class="kpi-card {% if kpis.out_of_stock_count > 0 %}kpi-danger{% endif %}" style="text-decoration: none; color: inherit;">
-            <div class="kpi-icon icon-red">🚫</div>
-            <div class="kpi-data">
-                <span class="kpi-label">Out of Stock</span>
-                <span class="kpi-value" id="kpiOutOfStockCount">{{ kpis.out_of_stock_count|default:0 }}</span>
-            </div>
-        </a>
-        <div class="kpi-card">
-            <div class="kpi-icon icon-green">💰</div>
-            <div class="kpi-data">
-                <span class="kpi-label">Stock Valuation</span>
-                <span class="kpi-value font-mono">${{ kpis.total_valuation|floatformat:2 }}</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- Critical Low Stock Alerts Section -->
-    {% if low_stock_items %}
-    <div class="card" style="margin-bottom: 2rem; border-color: rgba(245, 158, 11, 0.4); background: linear-gradient(180deg, rgba(245, 158, 11, 0.05) 0%, rgba(30, 41, 59, 0.8) 100%);">
-        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-            <div>
-                <h2 class="section-title" style="color: #f59e0b; display: flex; align-items: center; gap: 0.5rem;">
-                    <span>⚠️</span> Low-Stock Replenishment Queue
-                </h2>
-                <p class="section-desc">Products where current quantity &le; reorder threshold requiring procurement action</p>
-            </div>
-            <a href="{% url 'domain_app:low_stock_list' %}" class="btn btn-secondary btn-sm">
-                View Full Queue ({{ kpis.total_reorder_needed }}) &rarr;
+    <section class="kpi-section" aria-label="Inventory Key Performance Indicators">
+        <div class="kpi-grid">
+            <a href="{% url 'domain_app:product_list' %}" class="kpi-card" style="text-decoration: none; color: inherit;" title="Total product SKUs">
+                <div class="kpi-icon icon-blue" aria-hidden="true">📦</div>
+                <div class="kpi-data">
+                    <span class="kpi-label">Total SKUs</span>
+                    <span class="kpi-value" id="kpiTotalProducts">{{ kpis.total_products|default:0 }}</span>
+                </div>
             </a>
+            <div class="kpi-card" title="Total physical units across all warehouse stock">
+                <div class="kpi-icon icon-purple" aria-hidden="true">📊</div>
+                <div class="kpi-data">
+                    <span class="kpi-label">Total Stock Units</span>
+                    <span class="kpi-value font-mono" id="kpiTotalUnits">{{ kpis.total_units|default:0 }}</span>
+                </div>
+            </div>
+            <a href="{% url 'domain_app:low_stock_list' %}" class="kpi-card {% if kpis.low_stock_count > 0 %}kpi-warning{% endif %}" style="text-decoration: none; color: inherit;" title="Products with stock at or below reorder threshold">
+                <div class="kpi-icon icon-yellow" aria-hidden="true">⚠️</div>
+                <div class="kpi-data">
+                    <span class="kpi-label">Low Stock Alerts</span>
+                    <span class="kpi-value" id="kpiLowStockCount">{{ kpis.low_stock_count|default:0 }}</span>
+                </div>
+            </a>
+            <a href="{% url 'domain_app:inventory_dashboard' %}?stock_status=out_of_stock" class="kpi-card {% if kpis.out_of_stock_count > 0 %}kpi-danger{% endif %}" style="text-decoration: none; color: inherit;" title="Products with zero physical inventory">
+                <div class="kpi-icon icon-red" aria-hidden="true">🚫</div>
+                <div class="kpi-data">
+                    <span class="kpi-label">Out of Stock</span>
+                    <span class="kpi-value" id="kpiOutOfStockCount">{{ kpis.out_of_stock_count|default:0 }}</span>
+                </div>
+            </a>
+            <a href="{% url 'domain_app:inventory_dashboard' %}?stock_status=attention" class="kpi-card {% if kpis.attention_count > 0 %}kpi-attention{% endif %}" style="text-decoration: none; color: inherit;" title="Products requiring immediate replenishment or audit attention">
+                <div class="kpi-icon icon-attention" aria-hidden="true">🔔</div>
+                <div class="kpi-data">
+                    <span class="kpi-label">Requiring Attention</span>
+                    <span class="kpi-value" id="kpiAttentionCount">{{ kpis.attention_count|default:0 }}</span>
+                </div>
+            </a>
+            <div class="kpi-card" title="Total inventory valuation based on current stock and unit prices">
+                <div class="kpi-icon icon-green" aria-hidden="true">💰</div>
+                <div class="kpi-data">
+                    <span class="kpi-label">Stock Valuation</span>
+                    <span class="kpi-value font-mono" id="kpiTotalValuation">${{ kpis.total_valuation|floatformat:2 }}</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Dedicated Priority Section: Products Requiring Attention -->
+    <section class="card attention-card" aria-label="Products Requiring Operational Attention">
+        <div class="section-header">
+            <div class="section-title-group">
+                <h2 class="section-title attention-title">
+                    <span class="attention-badge-icon" aria-hidden="true">🚨</span> Products Requiring Attention
+                    {% if kpis.attention_count > 0 %}
+                    <span class="attention-counter-pill">{{ kpis.attention_count }} Action{{ kpis.attention_count|pluralize }} Needed</span>
+                    {% endif %}
+                </h2>
+                <p class="section-desc">Prioritized operational queue: out-of-stock items, critical threshold deficits, and stranded stock requiring procurement or audit action.</p>
+            </div>
+            <div class="section-actions">
+                <a href="{% url 'domain_app:low_stock_list' %}" class="btn btn-secondary btn-sm" title="View dedicated full low stock report">
+                    Full Low-Stock Queue &rarr;
+                </a>
+            </div>
         </div>
 
-        <div class="table-container" style="background: transparent; border: none; padding: 0;">
-            <table class="data-table">
+        {% if attention_items %}
+        <div class="table-container attention-table-container">
+            <table class="data-table attention-table" aria-label="Attention required products table">
                 <thead>
                     <tr>
-                        <th>Product SKU</th>
-                        <th>Category</th>
-                        <th class="text-center">Current Stock</th>
-                        <th class="text-center">Reorder Threshold</th>
-                        <th class="text-center">Target Level</th>
-                        <th class="text-center">Status</th>
-                        <th>Supplier</th>
-                        {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
-                        <th class="text-right">Action</th>
-                        {% endif %}
+                        <th scope="col">Urgency</th>
+                        <th scope="col">Product &amp; SKU</th>
+                        <th scope="col">Category</th>
+                        <th scope="col" class="text-center">Stock / Threshold</th>
+                        <th scope="col" class="text-center">Deficit to Reorder</th>
+                        <th scope="col">Attention Reason</th>
+                        <th scope="col">Supplier</th>
+                        <th scope="col" class="text-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in low_stock_items %}
-                    <tr id="low-stock-row-{{ item.pk }}">
+                    {% for item in attention_items %}
+                    <tr id="attention-row-{{ item.product_id }}" class="attention-row attention-row-{{ item.urgency|lower }}">
+                        <td>
+                            {% if item.urgency == 'CRITICAL' %}
+                                <span class="urgency-pill urgency-critical" title="Zero units in warehouse">
+                                    <span class="pulse-dot"></span> Critical
+                                </span>
+                            {% elif item.urgency == 'WARNING' %}
+                                <span class="urgency-pill urgency-warning" title="Stock at or below reorder threshold">
+                                    ⚠️ Warning
+                                </span>
+                            {% else %}
+                                <span class="urgency-pill urgency-audit" title="Inactive SKU with positive stock">
+                                    🔍 Audit
+                                </span>
+                            {% endif %}
+                        </td>
                         <td class="product-identity">
-                            <a href="{% url 'domain_app:product_detail' item.pk %}" class="product-name-link font-bold">
+                            <a href="{% url 'domain_app:product_detail' item.product_id %}" class="product-name-link font-bold">
                                 {{ item.name }}
                             </a>
                             <span class="product-sku-badge">{{ item.sku }}</span>
                         </td>
-                        <td><span class="category-pill">{{ item.category.name }}</span></td>
+                        <td>
+                            <span class="category-pill">{{ item.category_name|default:"Uncategorized" }}</span>
+                        </td>
                         <td class="text-center">
-                            <span class="stock-qty font-bold {% if item.stock_quantity == 0 %}text-danger{% else %}text-warning{% endif %}">
+                            <span class="stock-qty-display font-bold {% if item.stock_quantity == 0 %}text-danger{% else %}text-warning{% endif %}">
                                 {{ item.stock_quantity }}
                             </span>
-                        </td>
-                        <td class="text-center text-muted font-mono">{{ item.reorder_level }}</td>
-                        <td class="text-center text-muted font-mono">
-                            {{ item.target_stock_level|default:"—" }}
+                            <span class="text-muted text-sm font-mono"> / {{ item.reorder_level }}</span>
+                            {% if item.target_stock_level %}
+                            <div class="text-muted text-xs font-mono" title="Target Stock Level">tgt: {{ item.target_stock_level }}</div>
+                            {% endif %}
                         </td>
                         <td class="text-center">
-                            {% if item.stock_quantity == 0 %}
-                                <span class="badge badge-danger">Out of Stock</span>
+                            {% if item.deficit_to_reorder > 0 %}
+                                <span class="deficit-pill deficit-high" title="Units needed to reach reorder threshold">
+                                    -{{ item.deficit_to_reorder }} units
+                                </span>
                             {% else %}
-                                <span class="badge badge-warning">Low Stock (≤{{ item.reorder_level }})</span>
+                                <span class="deficit-pill deficit-ok" title="At threshold">At Level</span>
                             {% endif %}
                         </td>
                         <td>
+                            <span class="attention-reason-text">{{ item.reason }}</span>
+                        </td>
+                        <td>
                             {% if item.supplier %}
-                                <span class="text-sm">🏢 {{ item.supplier.name }}</span>
+                                <div class="supplier-info-compact">
+                                    <span class="supplier-name text-sm">🏢 {{ item.supplier_name }}</span>
+                                    {% if item.supplier_email %}
+                                    <a href="mailto:{{ item.supplier_email }}" class="supplier-email-link text-xs font-mono" title="Contact supplier via email">
+                                        ✉️ {{ item.supplier_email }}
+                                    </a>
+                                    {% endif %}
+                                </div>
                             {% else %}
                                 <span class="text-muted text-sm">Direct / Internal</span>
                             {% endif %}
                         </td>
-                        {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
-                        <td class="text-right">
-                            <button type="button" class="btn btn-primary btn-sm btn-adjust-stock"
-                                    data-product-id="{{ item.pk }}"
-                                    data-product-name="{{ item.name }}"
-                                    data-product-sku="{{ item.sku }}"
-                                    data-stock="{{ item.stock_quantity }}"
-                                    data-reorder="{{ item.reorder_level }}">
-                                ⚡ Restock
-                            </button>
+                        <td class="text-right actions-cell">
+                            <div class="row-actions justify-end">
+                                {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
+                                <button type="button" class="btn btn-primary btn-sm btn-adjust-stock"
+                                        data-product-id="{{ item.product_id }}"
+                                        data-product-name="{{ item.name }}"
+                                        data-product-sku="{{ item.sku }}"
+                                        data-stock="{{ item.stock_quantity }}"
+                                        data-reorder="{{ item.reorder_level }}"
+                                        title="Quick Restock / Stock Movement">
+                                    ⚡ Restock
+                                </button>
+                                {% endif %}
+                                <a href="{% url 'domain_app:product_detail' item.product_id %}" class="action-btn view-btn" title="View Product Details">
+                                    👁️
+                                </a>
+                            </div>
                         </td>
-                        {% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
-    {% endif %}
+        {% else %}
+        <div class="attention-healthy-banner" role="status">
+            <div class="healthy-icon" aria-hidden="true">🎉</div>
+            <div class="healthy-content">
+                <h3 class="healthy-title">Optimal Inventory Health</h3>
+                <p class="healthy-desc">All catalog products currently maintain healthy physical stock levels above their reorder thresholds. No immediate procurement or audit actions are required.</p>
+            </div>
+        </div>
+        {% endif %}
+    </section>
+
+    <!-- Quick Filter Pills Navigation -->
+    <nav class="quick-filter-bar" aria-label="Inventory quick filters">
+        <span class="quick-filter-label" aria-hidden="true">Filter Views:</span>
+        <div class="quick-filter-pills" role="tablist">
+            <a href="{% url 'domain_app:inventory_dashboard' %}" 
+               class="quick-pill {% if not selected_stock %}active{% endif %}"
+               role="tab" aria-selected="{% if not selected_stock %}true{% else %}false{% endif %}">
+                📦 All Products ({{ kpis.total_products }})
+            </a>
+            <a href="{% url 'domain_app:inventory_dashboard' %}?stock_status=attention" 
+               class="quick-pill pill-attention {% if selected_stock == 'attention' %}active{% endif %}"
+               role="tab" aria-selected="{% if selected_stock == 'attention' %}true{% else %}false{% endif %}">
+                🚨 Requiring Attention ({{ kpis.attention_count|default:0 }})
+            </a>
+            <a href="{% url 'domain_app:inventory_dashboard' %}?stock_status=low_stock" 
+               class="quick-pill pill-warning {% if selected_stock == 'low_stock' %}active{% endif %}"
+               role="tab" aria-selected="{% if selected_stock == 'low_stock' %}true{% else %}false{% endif %}">
+                ⚠️ Low Stock ({{ kpis.low_stock_count|default:0 }})
+            </a>
+            <a href="{% url 'domain_app:inventory_dashboard' %}?stock_status=out_of_stock" 
+               class="quick-pill pill-danger {% if selected_stock == 'out_of_stock' %}active{% endif %}"
+               role="tab" aria-selected="{% if selected_stock == 'out_of_stock' %}true{% else %}false{% endif %}">
+                🚫 Out of Stock ({{ kpis.out_of_stock_count|default:0 }})
+            </a>
+            <a href="{% url 'domain_app:inventory_dashboard' %}?stock_status=in_stock" 
+               class="quick-pill pill-success {% if selected_stock == 'in_stock' %}active{% endif %}"
+               role="tab" aria-selected="{% if selected_stock == 'in_stock' %}true{% else %}false{% endif %}">
+                ✅ Healthy Stock
+            </a>
+        </div>
+    </nav>
 
     <!-- Filter & Live Search Toolbar for Catalog -->
-    <div class="filter-toolbar card">
-        <form method="get" action="{% url 'domain_app:inventory_dashboard' %}" class="filter-form" id="productFilterForm">
+    <section class="filter-toolbar card" aria-label="Inventory filter controls">
+        <form method="get" action="{% url 'domain_app:inventory_dashboard' %}" class="filter-form" id="productFilterForm" role="search">
             <div class="filter-group search-group">
-                <span class="search-icon">🔍</span>
+                <span class="search-icon" aria-hidden="true">🔍</span>
                 {{ filter_form.search }}
             </div>
             
             <div class="filter-group">
+                <label for="categoryFilterSelect" class="sr-only">Category</label>
                 {{ filter_form.category }}
             </div>
 
             <div class="filter-group">
+                <label for="stockFilterSelect" class="sr-only">Stock Health</label>
                 {{ filter_form.stock_status }}
             </div>
 
             {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
             <div class="filter-group">
+                <label for="statusFilterSelect" class="sr-only">Product Status</label>
                 {{ filter_form.status }}
             </div>
             {% endif %}
@@ -184,30 +274,39 @@
                 <a href="{% url 'domain_app:inventory_dashboard' %}" class="btn btn-ghost btn-sm" id="resetFilters">Reset</a>
             </div>
         </form>
-    </div>
+    </section>
 
     <!-- Complete Inventory Table -->
-    <div class="table-container card">
+    <section class="table-container card" aria-label="Inventory catalog table">
+        <div class="table-header-bar">
+            <h2 class="table-section-title">Warehouse Inventory Catalog</h2>
+            <span class="table-count-badge">{{ page_obj.paginator.count }} item{{ page_obj.paginator.count|pluralize }} total</span>
+        </div>
+        
         <table class="data-table" id="productsTable">
             <thead>
                 <tr>
-                    <th>Product & SKU</th>
-                    <th>Category</th>
-                    <th class="text-right">Unit Price</th>
-                    <th class="text-center">Stock / Reorder / Target</th>
-                    <th class="text-center">Health Status</th>
+                    <th scope="col">Product &amp; SKU</th>
+                    <th scope="col">Category</th>
+                    <th scope="col" class="text-right">Unit Price</th>
+                    <th scope="col" class="text-center">Stock / Reorder / Target</th>
+                    <th scope="col" class="text-center">Health Status</th>
                     {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
-                    <th class="text-center">Status</th>
+                    <th scope="col" class="text-center">Status</th>
                     {% endif %}
-                    <th class="text-right">Actions</th>
+                    <th scope="col" class="text-right">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for product in products %}
-                <tr class="product-row" id="product-row-{{ product.pk }}" data-product-id="{{ product.pk }}" data-name="{{ product.name|lower }}" data-sku="{{ product.sku|lower }}" data-status="{{ product.stock_status }}">
+                <tr class="product-row" id="product-row-{{ product.pk }}" 
+                    data-product-id="{{ product.pk }}" 
+                    data-name="{{ product.name|lower }}" 
+                    data-sku="{{ product.sku|lower }}" 
+                    data-status="{{ product.stock_status }}">
                     <td class="product-identity">
                         <div class="product-title-group">
-                            <a href="{% url 'domain_app:product_detail' product.pk %}" class="product-name-link">
+                            <a href="{% url 'domain_app:product_detail' product.pk %}" class="product-name-link font-bold">
                                 {{ product.name }}
                             </a>
                             <span class="product-sku-badge">{{ product.sku }}</span>
@@ -226,16 +325,16 @@
                         <span class="stock-qty-display font-bold {% if product.stock_quantity == 0 %}text-danger{% elif product.is_low_stock %}text-warning{% else %}text-success{% endif %}">
                             {{ product.stock_quantity }}
                         </span>
-                        <span class="text-muted text-sm"> / {{ product.reorder_level }}</span>
+                        <span class="text-muted text-sm font-mono"> / {{ product.reorder_level }}</span>
                         {% if product.target_stock_level %}
-                        <span class="text-muted text-sm font-mono" title="Target Stock Level"> (tgt: {{ product.target_stock_level }})</span>
+                        <span class="text-muted text-xs font-mono" title="Target Stock Level"> (tgt: {{ product.target_stock_level }})</span>
                         {% endif %}
                     </td>
                     <td class="text-center stock-status-cell">
                         {% if product.stock_status == 'out_of_stock' %}
                             <span class="badge badge-danger">Out of Stock</span>
                         {% elif product.stock_status == 'low_stock' %}
-                            <span class="badge badge-warning">Low Stock (≤{{ product.reorder_level }})</span>
+                            <span class="badge badge-warning">Low Stock (&le;{{ product.reorder_level }})</span>
                         {% else %}
                             <span class="badge badge-success">In Stock</span>
                         {% endif %}
@@ -243,16 +342,16 @@
                     {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
                     <td class="text-center">
                         {% if product.is_active %}
-                            <span class="status-indicator active" title="Active">Active</span>
+                            <span class="status-indicator active" title="Active catalog SKU">Active</span>
                         {% else %}
-                            <span class="status-indicator inactive" title="Inactive">Inactive</span>
+                            <span class="status-indicator inactive" title="Inactive catalog SKU">Inactive</span>
                         {% endif %}
                     </td>
                     {% endif %}
                     <td class="text-right actions-cell">
-                        <div class="row-actions">
+                        <div class="row-actions justify-end">
                             {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
-                            <button type="button" class="action-btn btn-adjust-stock" title="Adjust Stock"
+                            <button type="button" class="action-btn btn-adjust-stock" title="Adjust Stock / Quick Restock"
                                     data-product-id="{{ product.pk }}"
                                     data-product-name="{{ product.name }}"
                                     data-product-sku="{{ product.sku }}"
@@ -278,9 +377,9 @@
                 <tr class="empty-row">
                     <td colspan="{% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}7{% else %}6{% endif %}" class="empty-state">
                         <div class="empty-state-content">
-                            <span class="empty-icon">📦</span>
+                            <span class="empty-icon" aria-hidden="true">📦</span>
                             <h3>No Products Found</h3>
-                            <p>No inventory records match your criteria.</p>
+                            <p>No inventory records match the specified search and filter criteria.</p>
                         </div>
                     </td>
                 </tr>
@@ -290,61 +389,61 @@
 
         <!-- Pagination Bar -->
         {% if page_obj.has_other_pages %}
-        <div class="pagination-bar">
+        <nav class="pagination-bar" aria-label="Catalog pagination">
             <span class="pagination-info">
                 Showing {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }} items
             </span>
             <div class="pagination-controls">
                 {% if page_obj.has_previous %}
-                    <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_stock %}&stock_status={{ selected_stock }}{% endif %}" class="page-link">&laquo; Prev</a>
+                    <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_stock %}&stock_status={{ selected_stock }}{% endif %}{% if selected_status %}&status={{ selected_status }}{% endif %}" class="page-link" aria-label="Previous page">&laquo; Prev</a>
                 {% endif %}
 
                 {% for num in page_obj.paginator.page_range %}
                     {% if page_obj.number == num %}
-                        <span class="page-link active">{{ num }}</span>
+                        <span class="page-link active" aria-current="page">{{ num }}</span>
                     {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
-                        <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_stock %}&stock_status={{ selected_stock }}{% endif %}" class="page-link">{{ num }}</a>
+                        <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_stock %}&stock_status={{ selected_stock }}{% endif %}{% if selected_status %}&status={{ selected_status }}{% endif %}" class="page-link">{{ num }}</a>
                     {% endif %}
                 {% endfor %}
 
                 {% if page_obj.has_next %}
-                    <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_stock %}&stock_status={{ selected_stock }}{% endif %}" class="page-link">Next &raquo;</a>
+                    <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_stock %}&stock_status={{ selected_stock }}{% endif %}{% if selected_status %}&status={{ selected_status }}{% endif %}" class="page-link" aria-label="Next page">Next &raquo;</a>
                 {% endif %}
             </div>
-        </div>
+        </nav>
         {% endif %}
-    </div>
+    </section>
 
     <!-- Recent Stock Movements Audit Feed -->
-    <div class="card" style="margin-top: 2rem;">
-        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <section class="card movements-section" aria-label="Recent stock movements audit ledger">
+        <div class="section-header">
             <div>
                 <h2 class="section-title">Recent Stock Movements (Audit Trail)</h2>
-                <p class="section-desc">Real-time ledger of incoming, outgoing, and adjusted stock</p>
+                <p class="section-desc">Auditable, real-time ledger capturing incoming stock, dispatches, and warehouse count calibrations.</p>
             </div>
-            <a href="{% url 'domain_app:inventory_transactions' %}" class="btn btn-secondary btn-sm">
+            <a href="{% url 'domain_app:inventory_transactions' %}" class="btn btn-secondary btn-sm" title="View all stock transactions">
                 View Full Audit Ledger &rarr;
             </a>
         </div>
 
-        <div class="table-container" style="background: transparent; border: none; padding: 0;">
-            <table class="data-table">
+        <div class="table-container movements-table-container">
+            <table class="data-table" aria-label="Recent stock movements table">
                 <thead>
                     <tr>
-                        <th>Timestamp</th>
-                        <th>Product & SKU</th>
-                        <th>Movement Type</th>
-                        <th class="text-right">Units Changed</th>
-                        <th class="text-center">Stock Snapshot</th>
-                        <th>Reference / Reason</th>
-                        <th>User</th>
+                        <th scope="col">Timestamp</th>
+                        <th scope="col">Product &amp; SKU</th>
+                        <th scope="col">Movement Type</th>
+                        <th scope="col" class="text-right">Units Changed</th>
+                        <th scope="col" class="text-center">Stock Snapshot</th>
+                        <th scope="col">Reference / Reason</th>
+                        <th scope="col">Authorized By</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for tx in recent_transactions %}
                     <tr>
                         <td class="font-mono text-muted text-sm">{{ tx.created_at|date:"M d, Y H:i" }}</td>
-                        <td>
+                        <td class="product-identity">
                             <a href="{% url 'domain_app:product_detail' tx.product.pk %}" class="product-name-link font-bold">
                                 {{ tx.product.name }}
                             </a>
@@ -360,16 +459,16 @@
                             {% endif %}
                         </td>
                         <td class="text-right font-mono font-bold">
-                            {% if tx.transaction_type == 'ADD' %}+{{ tx.quantity }}
-                            {% elif tx.transaction_type == 'REMOVE' %}-{{ tx.quantity }}
-                            {% else %}{{ tx.quantity }}{% endif %}
+                            {% if tx.transaction_type == 'ADD' %}<span class="text-success">+{{ tx.quantity }}</span>
+                            {% elif tx.transaction_type == 'REMOVE' %}<span class="text-danger">-{{ tx.quantity }}</span>
+                            {% else %}<span class="text-info">{{ tx.quantity }}</span>{% endif %}
                         </td>
                         <td class="text-center font-mono text-sm">
-                            {{ tx.previous_stock }} &rarr; <span class="font-bold">{{ tx.new_stock }}</span>
+                            {{ tx.previous_stock }} &rarr; <span class="font-bold text-primary">{{ tx.new_stock }}</span>
                         </td>
                         <td>
                             {% if tx.reference %}
-                                <span class="product-sku-badge">{{ tx.reference }}</span>
+                                <span class="product-sku-badge" title="Audit reference">{{ tx.reference }}</span>
                             {% endif %}
                             {% if tx.notes %}
                                 <span class="text-muted text-sm">{{ tx.notes|truncatechars:35 }}</span>
@@ -383,27 +482,27 @@
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="empty-state" style="padding: 2rem; text-align: center;">
-                            <p class="text-muted">No stock movements recorded yet.</p>
+                        <td colspan="7" class="empty-state" style="padding: 2.5rem; text-align: center;">
+                            <p class="text-muted">No stock movements recorded yet. Authorized managers may use the Restock button or record stock adjustments to generate audit transactions.</p>
                         </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
+    </section>
 </div>
 
 <!-- Stock Adjustment Dynamic Modal (ES6+ AJAX) -->
 {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
-<div id="stockAdjustmentModal" class="modal-backdrop" style="display: none;">
+<div id="stockAdjustmentModal" class="modal-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modalDialogTitle">
     <div class="modal-card">
         <div class="modal-header">
             <div class="modal-title-group">
-                <span class="modal-icon">⚡</span>
-                <h3 class="modal-title">Inventory Stock Movement</h3>
+                <span class="modal-icon" aria-hidden="true">⚡</span>
+                <h3 class="modal-title" id="modalDialogTitle">Inventory Stock Movement</h3>
             </div>
-            <button type="button" class="modal-close" id="btnCloseAdjustModal">&times;</button>
+            <button type="button" class="modal-close" id="btnCloseAdjustModal" aria-label="Close modal">&times;</button>
         </div>
         
         <form id="stockAdjustmentForm" method="post" action="">
@@ -420,7 +519,7 @@
                     </div>
                 </div>
 
-                <div id="modalFormErrors" class="alert alert-error" style="display: none; margin-bottom: 1rem;"></div>
+                <div id="modalFormErrors" class="alert alert-error" style="display: none; margin-bottom: 1rem;" role="alert"></div>
 
                 <div class="form-group" style="margin-bottom: 1rem;">
                     <label class="form-label" for="stockAdjustmentType">Operation Type <span class="required-star">*</span></label>
