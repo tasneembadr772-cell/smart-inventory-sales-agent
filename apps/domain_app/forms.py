@@ -7,7 +7,7 @@ Provides HTML widget styling, validation error mapping, and form sanitation.
 from decimal import Decimal
 from django import forms
 from django.db import models
-from .models import Category, Product, Supplier, InventoryTransaction
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
 
 
 class SupplierForm(forms.ModelForm):
@@ -408,4 +408,100 @@ class SupplierFilterForm(forms.Form):
             'id': 'statusFilterSelect',
         })
     )
+
+
+class SaleFilterForm(forms.Form):
+    """GET filter form for sales orders list."""
+    STATUS_CHOICES = [
+        ('', 'All Statuses'),
+        (Sale.Status.COMPLETED, 'Completed'),
+        (Sale.Status.DRAFT, 'Draft'),
+        (Sale.Status.CANCELLED, 'Cancelled'),
+    ]
+
+    search = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'search-input',
+            'placeholder': 'Search Order ID, Customer, Email, Phone...',
+            'autocomplete': 'off',
+            'id': 'saleSearchInput',
+        })
+    )
+    status = forms.ChoiceField(
+        choices=STATUS_CHOICES,
+        required=False,
+        widget=forms.Select(attrs={
+            'class': 'filter-select',
+            'id': 'saleStatusSelect',
+        })
+    )
+    date_from = forms.DateField(
+        required=False,
+        widget=forms.DateInput(attrs={
+            'class': 'filter-select',
+            'type': 'date',
+            'placeholder': 'From Date',
+            'id': 'saleDateFrom',
+        })
+    )
+    date_to = forms.DateField(
+        required=False,
+        widget=forms.DateInput(attrs={
+            'class': 'filter-select',
+            'type': 'date',
+            'placeholder': 'To Date',
+            'id': 'saleDateTo',
+        })
+    )
+
+
+class SaleCreateForm(forms.Form):
+    """
+    Form for validating customer and header metadata during sale creation.
+    Line items are handled dynamically through structured form inputs or JSON payload.
+    """
+    customer_name = forms.CharField(
+        max_length=200,
+        required=True,
+        widget=forms.TextInput(attrs={
+            'class': 'form-input',
+            'placeholder': 'e.g. John Doe / Acme Corp',
+            'required': True,
+            'id': 'customerNameInput',
+        })
+    )
+    customer_email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(attrs={
+            'class': 'form-input',
+            'placeholder': 'e.g. customer@example.com',
+            'id': 'customerEmailInput',
+        })
+    )
+    customer_phone = forms.CharField(
+        max_length=50,
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'form-input',
+            'placeholder': 'e.g. +1 555-0199',
+            'id': 'customerPhoneInput',
+        })
+    )
+    notes = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={
+            'class': 'form-textarea',
+            'rows': 3,
+            'placeholder': 'Optional transaction notes or instructions...',
+            'id': 'saleNotesInput',
+        })
+    )
+
+    def clean_customer_name(self):
+        name = self.cleaned_data.get('customer_name', '').strip()
+        if not name:
+            raise forms.ValidationError('Customer name is required.')
+        return name
+
 

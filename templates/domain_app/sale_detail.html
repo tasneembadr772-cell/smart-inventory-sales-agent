@@ -1,0 +1,187 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Sale {{ sale.order_identifier }} | Order Details{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Header Section -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <a href="{% url 'domain_app:sale_list' %}">Sales Orders</a>
+                <span class="sep">/</span>
+                <span class="current">{{ sale.order_identifier }}</span>
+            </div>
+            <div class="title-with-badge">
+                <h1 class="page-title">{{ sale.order_identifier }}</h1>
+                {% if sale.status == 'COMPLETED' %}
+                    <span class="badge badge-success badge-lg">Completed</span>
+                {% elif sale.status == 'DRAFT' %}
+                    <span class="badge badge-warning badge-lg">Draft</span>
+                {% else %}
+                    <span class="badge badge-danger badge-lg">Cancelled</span>
+                {% endif %}
+            </div>
+            <p class="page-subtitle">Processed on {{ sale.sale_date|date:"F d, Y at H:i" }} by {{ sale.created_by.username|default:"System" }}</p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:sale_list' %}" class="btn btn-secondary">
+                &larr; Back to Sales
+            </a>
+            <a href="{% url 'domain_app:sale_create' %}" class="btn btn-primary">
+                <span class="btn-icon">➕</span> New Sale
+            </a>
+        </div>
+    </div>
+
+    <!-- Order Metadata & Customer Card -->
+    <div class="detail-grid">
+        <div class="detail-card card">
+            <h2 class="card-title">Customer Details</h2>
+            <div class="info-list">
+                <div class="info-item">
+                    <span class="info-label">Customer Name</span>
+                    <span class="info-value font-bold">{{ sale.customer_name }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Email Address</span>
+                    <span class="info-value">
+                        {% if sale.customer_email %}
+                            <a href="mailto:{{ sale.customer_email }}" class="text-primary hover:underline">{{ sale.customer_email }}</a>
+                        {% else %}
+                            <span class="text-muted">Not specified</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Telephone</span>
+                    <span class="info-value">
+                        {% if sale.customer_phone %}
+                            {{ sale.customer_phone }}
+                        {% else %}
+                            <span class="text-muted">Not specified</span>
+                        {% endif %}
+                    </span>
+                </div>
+                {% if sale.notes %}
+                <div class="info-item">
+                    <span class="info-label">Transaction Notes</span>
+                    <span class="info-value text-muted">{{ sale.notes }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="detail-card card">
+            <h2 class="card-title">Financial & Audit Summary</h2>
+            <div class="info-list">
+                <div class="info-item">
+                    <span class="info-label">Total Amount</span>
+                    <span class="info-value font-bold text-accent text-xl">${{ sale.total_amount|floatformat:2 }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Line Items</span>
+                    <span class="info-value">{{ items|length }} items ({{ sale.total_items_count }} physical units)</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Created At</span>
+                    <span class="info-value">{{ sale.created_at|date:"Y-m-d H:i:s" }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Last Updated</span>
+                    <span class="info-value">{{ sale.updated_at|date:"Y-m-d H:i:s" }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Line Items Table -->
+    <div class="card mt-4">
+        <div class="card-header-bar">
+            <h2 class="card-title">Purchased Items</h2>
+            <span class="text-muted text-sm">{{ items|length }} SKU(s) included</span>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Product / SKU</th>
+                        <th>Category</th>
+                        <th class="text-right">Unit Price</th>
+                        <th class="text-right">Quantity</th>
+                        <th class="text-right">Subtotal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>
+                            <div class="cell-main">
+                                <a href="{% url 'domain_app:product_detail' pk=item.product.pk %}" class="text-primary hover:underline">
+                                    {{ item.product.name }}
+                                </a>
+                            </div>
+                            <div class="cell-sub font-mono text-muted">{{ item.product.sku }}</div>
+                        </td>
+                        <td>
+                            <span class="badge badge-secondary">{{ item.product.category.name }}</span>
+                        </td>
+                        <td class="text-right font-mono">${{ item.unit_price|floatformat:2 }}</td>
+                        <td class="text-right font-bold">{{ item.quantity }}</td>
+                        <td class="text-right font-mono font-bold text-accent">${{ item.subtotal|floatformat:2 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="table-summary-row">
+                        <td colspan="4" class="text-right font-bold">Grand Total:</td>
+                        <td class="text-right font-bold">{{ sale.total_items_count }} units</td>
+                        <td class="text-right font-bold text-accent font-mono text-lg">${{ sale.total_amount|floatformat:2 }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- Stock Movement Audit Ledger Linked to this Sale -->
+    {% if inventory_transactions %}
+    <div class="card mt-4">
+        <div class="card-header-bar">
+            <h2 class="card-title">Stock Movement Audit Ledger</h2>
+            <span class="badge badge-info">Automated Ledger Entries</span>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>SKU</th>
+                        <th>Movement Type</th>
+                        <th>Quantity Removed</th>
+                        <th>Stock Transition</th>
+                        <th>Audit Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tx in inventory_transactions %}
+                    <tr>
+                        <td>{{ tx.created_at|date:"Y-m-d H:i:s" }}</td>
+                        <td class="font-mono font-bold">{{ tx.product.sku }}</td>
+                        <td><span class="badge badge-danger">Stock Removed</span></td>
+                        <td class="font-bold text-danger">-{{ tx.quantity }}</td>
+                        <td class="font-mono">{{ tx.previous_stock }} &rarr; {{ tx.new_stock }} units</td>
+                        <td class="text-muted">{{ tx.notes }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

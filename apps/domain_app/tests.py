@@ -16,9 +16,9 @@ from django.db import IntegrityError, models
 from django.test import TestCase, Client
 from django.urls import reverse
 
-from .models import Category, Product, Supplier, InventoryTransaction
-from .forms import SupplierForm, StockAdjustmentForm
-from .services import InsufficientStockError, InvalidStockAdjustmentError
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
+from .forms import SupplierForm, StockAdjustmentForm, SaleFilterForm, SaleCreateForm
+from .services import InsufficientStockError, InvalidStockAdjustmentError, SaleCreationError
 from . import selectors, services
 
 User = get_user_model()
@@ -1517,6 +1517,366 @@ class InventoryDashboardPolishTests(TestCase):
         self.assertIn('PSU-850-HS', skus)
         self.assertIn('NIC-10G-02', skus)
         self.assertNotIn('SRV-BLADE-01', skus)
+
+
+# ==============================================================================
+# Sales Management Module Test Suite
+# ==============================================================================
+
+class SalesManagementTestCase(TestCase):
+    """
+    Comprehensive test coverage for the Sales Management module:
+    1. Normalized Models, Foreign Keys, Subtotal Calculations, PROTECT deletion.
+    2. Atomic Sale Creation Service with row-locking and backend total calculations.
+    3. Stock Availability Validation preventing negative stock states.
+    4. Inventory Decrement and linked InventoryTransaction audit logging.
+    5. Duplicate line item consolidation enforcement.
+    6. Role-Based Access Control (RBAC) and Views.
+    """
+
+    def setUp(self):
+        self.client = Client()
+
+        # Users with distinct RBAC roles
+        self.admin = User.objects.create_user(
+            username='admin_sales_test',
+            email='adminsales@test.com',
+            password='Password123!',
+            role=User.Role.ADMIN,
+        )
+        self.manager = User.objects.create_user(
+            username='manager_sales_test',
+            email='managersales@test.com',
+            password='Password123!',
+            role=User.Role.MANAGER,
+        )
+        self.standard = User.objects.create_user(
+            username='standard_sales_test',
+            email='standardsales@test.com',
+            password='Password123!',
+            role=User.Role.STANDARD,
+        )
+
+        # Category and Products
+        self.category = Category.objects.create(
+            name='Enterprise Storage',
+            description='Enterprise SSD and NVMe drives',
+        )
+
+        self.product_nvme = Product.objects.create(
+            name='Enterprise NVMe SSD 2TB',
+            sku='SSD-NVME-2TB',
+            category=self.category,
+            price=Decimal('250.00'),
+            stock_quantity=20,
+            reorder_level=5,
+            is_active=True,
+        )
+
+        self.product_sata = Product.objects.create(
+            name='Data Center SATA SSD 1TB',
+            sku='SSD-SATA-1TB',
+            category=self.category,
+            price=Decimal('100.00'),
+            stock_quantity=5,
+            reorder_level=2,
+            is_active=True,
+        )
+
+        self.inactive_product = Product.objects.create(
+            name='Legacy Hard Drive 500GB',
+            sku='HDD-LEGACY-500',
+            category=self.category,
+            price=Decimal('40.00'),
+            stock_quantity=15,
+            reorder_level=2,
+            is_active=False,
+        )
+
+    # --------------------------------------------------------------------------
+    # 1. Model Constraints & Foreign Key Integrity
+    # --------------------------------------------------------------------------
+
+    def test_sale_and_sale_item_models_creation(self):
+        """Verifies Sale and SaleItem persistence, subtotal calculation, and helper properties."""
+        from django.utils import timezone
+
+        sale = Sale.objects.create(
+            order_identifier='SALE-20260918-001',
+            customer_name='Acme Cloud Infrastructure',
+            customer_email='billing@acmecloud.com',
+            customer_phone='+1 555-0199',
+            sale_date=timezone.now(),
+            status=Sale.Status.COMPLETED,
+            total_amount=Decimal('500.00'),
+            created_by=self.admin,
+        )
+
+        item = SaleItem.objects.create(
+            sale=sale,
+            product=self.product_nvme,
+            quantity=2,
+            unit_price=Decimal('250.00'),
+        )
+
+        self.assertEqual(item.subtotal, Decimal('500.00'))
+        self.assertEqual(sale.total_items_count, 2)
+        self.assertIn('Acme Cloud Infrastructure', str(sale))
+        self.assertIn('Enterprise NVMe SSD 2TB', str(item))
+
+    def test_unique_product_per_sale_constraint(self):
+        """Database constraint prevents duplicate line items for the same product in a sale."""
+        from django.utils import timezone
+
+        sale = Sale.objects.create(
+            order_identifier='SALE-20260918-UNIQUE',
+            customer_name='Unique Test Corp',
+            sale_date=timezone.now(),
+            status=Sale.Status.COMPLETED,
+            total_amount=Decimal('500.00'),
+        )
+
+        SaleItem.objects.create(
+            sale=sale,
+            product=self.product_nvme,
+            quantity=1,
+            unit_price=Decimal('250.00'),
+        )
+
+        with self.assertRaises(IntegrityError):
+            SaleItem.objects.create(
+                sale=sale,
+                product=self.product_nvme,
+                quantity=2,
+                unit_price=Decimal('250.00'),
+            )
+
+    def test_product_deletion_protected_when_referenced_by_sale(self):
+        """Product cannot be deleted if a SaleItem references it (PROTECT integrity)."""
+        from django.utils import timezone
+
+        sale = Sale.objects.create(
+            order_identifier='SALE-20260918-PROTECT',
+            customer_name='Protect Corp',
+            sale_date=timezone.now(),
+            status=Sale.Status.COMPLETED,
+            total_amount=Decimal('250.00'),
+        )
+        SaleItem.objects.create(
+            sale=sale,
+            product=self.product_nvme,
+            quantity=1,
+            unit_price=Decimal('250.00'),
+        )
+
+        with self.assertRaises(models.ProtectedError):
+            self.product_nvme.delete()
+
+    # --------------------------------------------------------------------------
+    # 2. Service Layer: Successful Sale Creation & Inventory Flow
+    # --------------------------------------------------------------------------
+
+    def test_create_sale_service_successful_flow(self):
+        """
+        create_sale creates Sale, SaleItems, decrements product stock,
+        and generates InventoryTransaction REMOVE records.
+        """
+        initial_nvme_stock = self.product_nvme.stock_quantity  # 20
+        initial_sata_stock = self.product_sata.stock_quantity  # 5
+
+        sale = services.create_sale(
+            customer_name='Mega Corp',
+            customer_email='procure@megacorp.com',
+            items_data=[
+                {'product_id': self.product_nvme.id, 'quantity': 3},  # 3 * 250 = 750
+                {'product_id': self.product_sata.id, 'quantity': 2},  # 2 * 100 = 200
+            ],
+            user=self.standard,
+            notes='Urgent data center expansion order.',
+        )
+
+        self.assertIsNotNone(sale.pk)
+        self.assertTrue(sale.order_identifier.startswith('SALE-'))
+        self.assertEqual(sale.total_amount, Decimal('950.00'))
+        self.assertEqual(sale.status, Sale.Status.COMPLETED)
+        self.assertEqual(sale.created_by, self.standard)
+        self.assertEqual(sale.items.count(), 2)
+
+        # Verify physical stock reduction
+        self.product_nvme.refresh_from_db()
+        self.product_sata.refresh_from_db()
+        self.assertEqual(self.product_nvme.stock_quantity, initial_nvme_stock - 3)  # 17
+        self.assertEqual(self.product_sata.stock_quantity, initial_sata_stock - 2)  # 3
+
+        # Verify audit transactions
+        txs = InventoryTransaction.objects.filter(reference=sale.order_identifier)
+        self.assertEqual(txs.count(), 2)
+        for tx in txs:
+            self.assertEqual(tx.transaction_type, InventoryTransaction.TransactionType.REMOVE)
+            self.assertEqual(tx.created_by, self.standard)
+
+    # --------------------------------------------------------------------------
+    # 3. Stock Validation & Preventing Negative Stock
+    # --------------------------------------------------------------------------
+
+    def test_insufficient_stock_prevents_sale_and_rolls_back(self):
+        """
+        When requested quantity exceeds stock, InsufficientStockError is raised,
+        no sale is saved, and product stock remains untouched.
+        """
+        initial_sata_stock = self.product_sata.stock_quantity  # 5 units
+
+        with self.assertRaises(InsufficientStockError):
+            services.create_sale(
+                customer_name='Greedy Corp',
+                items_data=[
+                    {'product_id': self.product_sata.id, 'quantity': 10},  # Request 10, only 5 available
+                ],
+                user=self.manager,
+            )
+
+        # Ensure stock was not decremented
+        self.product_sata.refresh_from_db()
+        self.assertEqual(self.product_sata.stock_quantity, initial_sata_stock)
+
+        # Ensure no Sale or InventoryTransaction was persisted
+        self.assertFalse(Sale.objects.filter(customer_name='Greedy Corp').exists())
+        self.assertFalse(InventoryTransaction.objects.filter(notes__icontains='Greedy Corp').exists())
+
+    def test_inactive_product_cannot_be_sold(self):
+        """Inactive products cannot be ordered in a completed sale."""
+        with self.assertRaises(InsufficientStockError):
+            services.create_sale(
+                customer_name='Inactive SKU Test',
+                items_data=[
+                    {'product_id': self.inactive_product.id, 'quantity': 1},
+                ],
+                user=self.admin,
+            )
+
+    def test_duplicate_product_in_items_data_rejected(self):
+        """Attempting to specify the same product ID multiple times in items_data is rejected."""
+        with self.assertRaises(SaleCreationError):
+            services.create_sale(
+                customer_name='Duplicate SKU Test',
+                items_data=[
+                    {'product_id': self.product_nvme.id, 'quantity': 1},
+                    {'product_id': self.product_nvme.id, 'quantity': 2},
+                ],
+                user=self.admin,
+            )
+
+    def test_empty_items_rejected(self):
+        """Sale with empty items payload is rejected."""
+        with self.assertRaises(SaleCreationError):
+            services.create_sale(
+                customer_name='Empty Items Test',
+                items_data=[],
+                user=self.admin,
+            )
+
+    # --------------------------------------------------------------------------
+    # 4. Data Selectors & KPIs
+    # --------------------------------------------------------------------------
+
+    def test_sales_selectors_and_kpis(self):
+        """Verifies selector querying, filtering, and summary statistics."""
+        sale1 = services.create_sale(
+            customer_name='Alpha Tech',
+            items_data=[{'product_id': self.product_nvme.id, 'quantity': 1}],
+        )
+        sale2 = services.create_sale(
+            customer_name='Beta Corp',
+            items_data=[{'product_id': self.product_nvme.id, 'quantity': 2}],
+        )
+
+        # Search selector
+        qs = selectors.get_sales_queryset(search='Alpha')
+        self.assertEqual(qs.count(), 1)
+        self.assertEqual(qs.first().customer_name, 'Alpha Tech')
+
+        # KPI selector
+        kpis = selectors.get_sales_summary_kpis()
+        self.assertEqual(kpis['completed_sales_count'], 2)
+        self.assertEqual(kpis['total_revenue'], Decimal('750.00'))  # (1*250) + (2*250)
+        self.assertEqual(kpis['total_units_sold'], 3)
+
+    # --------------------------------------------------------------------------
+    # 5. Views and RBAC Permissions
+    # --------------------------------------------------------------------------
+
+    def test_sales_views_require_authentication(self):
+        """Unauthenticated requests are redirected to the login view."""
+        list_url = reverse('domain_app:sale_list')
+        create_url = reverse('domain_app:sale_create')
+
+        resp_list = self.client.get(list_url)
+        self.assertEqual(resp_list.status_code, 302)
+        self.assertIn('/auth/login/', resp_list.url)
+
+        resp_create = self.client.get(create_url)
+        self.assertEqual(resp_create.status_code, 302)
+        self.assertIn('/auth/login/', resp_create.url)
+
+    def test_sales_list_view_authenticated(self):
+        """Authenticated users (Standard, Manager, Admin) can view the sales list."""
+        self.client.force_login(self.standard)
+        response = self.client.get(reverse('domain_app:sale_list'))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('kpis', response.context)
+        self.assertIn('page_obj', response.context)
+
+    def test_sale_detail_view(self):
+        """Sale detail view renders sale details and linked stock movement ledger."""
+        sale = services.create_sale(
+            customer_name='Detail Test Client',
+            customer_email='client@detailtest.com',
+            items_data=[{'product_id': self.product_nvme.id, 'quantity': 1}],
+            user=self.manager,
+        )
+
+        self.client.force_login(self.manager)
+        response = self.client.get(reverse('domain_app:sale_detail', kwargs={'pk': sale.pk}))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['sale'], sale)
+        self.assertContains(response, 'Detail Test Client')
+        self.assertContains(response, 'Stock Movement Audit Ledger')
+
+    def test_sale_create_post_success(self):
+        """POST to sale_create with form arrays creates sale and redirects to detail."""
+        self.client.force_login(self.standard)
+
+        payload = {
+            'customer_name': 'Web Order Customer',
+            'customer_email': 'web@order.com',
+            'customer_phone': '123-456',
+            'notes': 'Online checkout',
+            'product_id[]': [str(self.product_nvme.id)],
+            'quantity[]': ['2'],
+            'unit_price[]': ['250.00'],
+        }
+
+        response = self.client.post(reverse('domain_app:sale_create'), data=payload)
+        self.assertEqual(response.status_code, 302)
+
+        sale = Sale.objects.get(customer_name='Web Order Customer')
+        self.assertEqual(sale.total_amount, Decimal('500.00'))
+        self.assertRedirects(response, reverse('domain_app:sale_detail', kwargs={'pk': sale.pk}))
+
+    def test_sale_create_post_insufficient_stock_shows_error(self):
+        """POST requesting more stock than on hand re-renders with error message."""
+        self.client.force_login(self.standard)
+
+        payload = {
+            'customer_name': 'Overstock Customer',
+            'product_id[]': [str(self.product_sata.id)],
+            'quantity[]': ['999'],  # Only 5 available
+        }
+
+        response = self.client.post(reverse('domain_app:sale_create'), data=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Sale.objects.filter(customer_name='Overstock Customer').exists())
+
 
 
 

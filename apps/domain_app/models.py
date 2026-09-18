@@ -452,3 +452,246 @@ class InventoryTransaction(models.Model):
         self.clean()
         super().save(*args, **kwargs)
 
+
+class Sale(models.Model):
+    """
+    Commercial sales transaction record.
+
+    Database Integrity & Normalization:
+    - Globally unique order/sale identifier (`order_identifier`).
+    - Customer information recorded directly on the transaction header.
+    - Protected transaction lifecycle statuses.
+    - Safe backend monetary total amount with database check constraints.
+    - Indexed on order_identifier, sale_date, status, and created_at for fast retrieval.
+    """
+
+    class Status(models.TextChoices):
+        COMPLETED = 'COMPLETED', 'Completed'
+        DRAFT = 'DRAFT', 'Draft'
+        CANCELLED = 'CANCELLED', 'Cancelled'
+
+    order_identifier = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text='Globally unique sale/order tracking identifier (e.g. SALE-YYYYMMDD-XXXXXX).',
+    )
+    customer_name = models.CharField(
+        max_length=200,
+        db_index=True,
+        help_text='Full name or business identity of the purchasing customer.',
+    )
+    customer_email = models.EmailField(
+        blank=True,
+        default='',
+        help_text='Optional customer email address for receipting.',
+    )
+    customer_phone = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        help_text='Optional customer contact telephone number.',
+    )
+    sale_date = models.DateTimeField(
+        db_index=True,
+        help_text='Operational date and time of sale execution.',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.COMPLETED,
+        db_index=True,
+        help_text='Fulfillment and settlement lifecycle status of this sale.',
+    )
+    total_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='Aggregate sum of all line item subtotals (calculated safely on backend).',
+    )
+    notes = models.TextField(
+        blank=True,
+        default='',
+        help_text='Special instructions, shipping notes, or commercial context.',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sales_created',
+        help_text='Staff member or sales agent who processed this transaction.',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text='System record creation timestamp.',
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        help_text='System record modification timestamp.',
+    )
+
+    class Meta:
+        verbose_name = 'Sale'
+        verbose_name_plural = 'Sales'
+        ordering = ['-sale_date', '-created_at']
+        indexes = [
+            models.Index(fields=['order_identifier'], name='idx_sale_order_id'),
+            models.Index(fields=['sale_date'], name='idx_sale_date'),
+            models.Index(fields=['status'], name='idx_sale_status'),
+            models.Index(fields=['customer_name'], name='idx_sale_cust_name'),
+            models.Index(fields=['-created_at'], name='idx_sale_created_at'),
+            models.Index(fields=['status', '-sale_date'], name='idx_sale_status_date'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(total_amount__gte=Decimal('0.00')),
+                name='check_sale_total_amount_non_negative',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(order_identifier__exact=''),
+                name='check_sale_order_id_not_empty',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(customer_name__exact=''),
+                name='check_sale_customer_name_not_empty',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.order_identifier} - {self.customer_name} (${self.total_amount})"
+
+    @property
+    def total_items_count(self) -> int:
+        """Total quantity of physical units across all line items."""
+        return sum(item.quantity for item in self.items.all())
+
+    def clean(self):
+        """Model-level validation and normalization."""
+        if self.order_identifier:
+            self.order_identifier = self.order_identifier.strip().upper()
+            if not self.order_identifier:
+                raise ValidationError({'order_identifier': 'Order identifier cannot be empty.'})
+        else:
+            raise ValidationError({'order_identifier': 'Order identifier is required.'})
+
+        if self.customer_name:
+            self.customer_name = self.customer_name.strip()
+            if not self.customer_name:
+                raise ValidationError({'customer_name': 'Customer name cannot be empty or whitespace.'})
+        else:
+            raise ValidationError({'customer_name': 'Customer name is required.'})
+
+        if self.customer_email:
+            self.customer_email = self.customer_email.strip().lower()
+            try:
+                validate_email(self.customer_email)
+            except ValidationError as e:
+                raise ValidationError({'customer_email': 'Enter a valid customer email address.'}) from e
+
+        if self.customer_phone:
+            self.customer_phone = self.customer_phone.strip()
+
+        if self.total_amount is not None and self.total_amount < Decimal('0.00'):
+            raise ValidationError({'total_amount': 'Total amount cannot be negative.'})
+
+    def save(self, *args, **kwargs):
+        """Execute validation before saving to database."""
+        self.clean()
+        super().save(*args, **kwargs)
+
+
+class SaleItem(models.Model):
+    """
+    Individual line item associating a product SKU with a sale transaction.
+
+    Database Integrity & Normalization:
+    - Composite uniqueness on `('sale', 'product')` prevents duplicate line entries for the same product.
+    - Foreign key to Product uses `on_delete=models.PROTECT` ensuring product SKU deletions
+      do not destroy historical financial and ledger records.
+    - Foreign key to Sale uses `on_delete=models.CASCADE` ensuring complete order cleanup.
+    - Check constraints enforce positive quantities and non-negative pricing.
+    - Stores locked unit price and computed subtotal at time of transaction to maintain
+      financial integrity regardless of future product price changes.
+    """
+    sale = models.ForeignKey(
+        Sale,
+        on_delete=models.CASCADE,
+        related_name='items',
+        db_index=True,
+        help_text='Parent sale order transaction.',
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name='sale_items',
+        db_index=True,
+        help_text='Inventory product item purchased.',
+    )
+    quantity = models.PositiveIntegerField(
+        help_text='Quantity of units purchased (must be >= 1).',
+    )
+    unit_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='Historical unit price snapshot at time of sale.',
+    )
+    subtotal = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='Line total computed as quantity * unit_price.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Sale Item'
+        verbose_name_plural = 'Sale Items'
+        ordering = ['id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sale', 'product'],
+                name='unique_product_per_sale',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name='check_sale_item_qty_positive',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(unit_price__gte=Decimal('0.00')),
+                name='check_sale_item_unit_price_non_neg',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(subtotal__gte=Decimal('0.00')),
+                name='check_sale_item_subtotal_non_neg',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['sale', 'product'], name='idx_sale_item_sale_prod'),
+            models.Index(fields=['product'], name='idx_sale_item_prod'),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.quantity}x {self.product.name} @ ${self.unit_price} (${self.subtotal})"
+
+    def clean(self):
+        """Validate numeric integrity and subtotal correctness."""
+        if self.quantity is not None and self.quantity <= 0:
+            raise ValidationError({'quantity': 'Quantity must be at least 1 unit.'})
+
+        if self.unit_price is not None and self.unit_price < Decimal('0.00'):
+            raise ValidationError({'unit_price': 'Unit price cannot be negative.'})
+
+        if self.quantity is not None and self.unit_price is not None:
+            expected_subtotal = Decimal(str(self.quantity)) * Decimal(str(self.unit_price))
+            if self.subtotal is None or self.subtotal != expected_subtotal:
+                self.subtotal = expected_subtotal
+
+    def save(self, *args, **kwargs):
+        """Execute validation and safe subtotal calculation before persisting."""
+        if self.quantity is not None and self.unit_price is not None:
+            self.subtotal = Decimal(str(self.quantity)) * Decimal(str(self.unit_price))
+        self.clean()
+        super().save(*args, **kwargs)
+
+

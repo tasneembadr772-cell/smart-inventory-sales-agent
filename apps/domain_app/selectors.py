@@ -12,7 +12,7 @@ from django.db.models import QuerySet, Q, F, Count, Sum, Value, DecimalField
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 
-from .models import Category, Product, Supplier, InventoryTransaction
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
 
 
 def get_products_queryset(
@@ -488,5 +488,106 @@ def get_inventory_transactions_queryset(
             )
 
     return qs.order_by('-created_at')
+
+
+# ==============================================================================
+# Sales Query Selectors
+# ==============================================================================
+
+def get_sales_queryset(
+    user=None,
+    search: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> QuerySet[Sale]:
+    """
+    Retrieves filtered and optimized QuerySet of sales orders.
+
+    - Uses `select_related('created_by')` and `prefetch_related('items', 'items__product')`
+      to completely prevent N+1 queries.
+    - Filters by search query across order_identifier, customer_name, customer_email, customer_phone.
+    - Filters by sale status and date ranges.
+    """
+    qs = Sale.objects.select_related('created_by').prefetch_related(
+        'items',
+        'items__product',
+        'items__product__category',
+    ).all()
+
+    # Search filter
+    if search:
+        term = search.strip()
+        if term:
+            qs = qs.filter(
+                Q(order_identifier__icontains=term) |
+                Q(customer_name__icontains=term) |
+                Q(customer_email__icontains=term) |
+                Q(customer_phone__icontains=term)
+            )
+
+    # Status filter
+    if status_filter:
+        stat_clean = status_filter.strip().upper()
+        if stat_clean in Sale.Status.values:
+            qs = qs.filter(status=stat_clean)
+
+    # Date range filters
+    if date_from:
+        try:
+            qs = qs.filter(sale_date__date__gte=date_from)
+        except (ValueError, TypeError):
+            pass
+
+    if date_to:
+        try:
+            qs = qs.filter(sale_date__date__lte=date_to)
+        except (ValueError, TypeError):
+            pass
+
+    return qs.order_by('-sale_date', '-created_at')
+
+
+def get_sale_by_id(sale_id: int) -> Sale:
+    """
+    Fetches a single Sale by primary key with all associated line items and products prefetched.
+    Raises Http404 if not found.
+    """
+    return get_object_or_404(
+        Sale.objects.select_related('created_by').prefetch_related(
+            'items',
+            'items__product',
+            'items__product__category',
+            'items__product__supplier',
+        ),
+        pk=sale_id,
+    )
+
+
+def get_sales_summary_kpis() -> Dict[str, Any]:
+    """
+    Aggregates headline financial and order KPIs for executive dashboards and list headers.
+    """
+    total_sales_count = Sale.objects.count()
+    completed_sales = Sale.objects.filter(status=Sale.Status.COMPLETED)
+    
+    completed_count = completed_sales.count()
+    total_revenue = completed_sales.aggregate(
+        rev=Coalesce(Sum('total_amount'), Value(Decimal('0.00'), output_field=DecimalField()))
+    )['rev']
+
+    total_units_sold = SaleItem.objects.filter(
+        sale__status=Sale.Status.COMPLETED
+    ).aggregate(
+        units=Coalesce(Sum('quantity'), Value(0))
+    )['units']
+
+    return {
+        'total_sales_count': total_sales_count,
+        'completed_sales_count': completed_count,
+        'total_revenue': total_revenue,
+        'total_units_sold': total_units_sold,
+    }
+
 
 

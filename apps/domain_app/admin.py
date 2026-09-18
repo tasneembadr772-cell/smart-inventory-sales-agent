@@ -3,7 +3,7 @@ Django Administration Configuration for Inventory Domain Models.
 """
 
 from django.contrib import admin
-from .models import Category, Product, Supplier, InventoryTransaction
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
 
 
 @admin.register(Supplier)
@@ -90,5 +90,40 @@ class InventoryTransactionAdmin(admin.ModelAdmin):
         'created_at',
     )
     ordering = ('-created_at',)
+
+
+class SaleItemInline(admin.TabularInline):
+    model = SaleItem
+    extra = 0
+    readonly_fields = ('product', 'quantity', 'unit_price', 'subtotal', 'created_at')
+    can_delete = False
+
+
+@admin.register(Sale)
+class SaleAdmin(admin.ModelAdmin):
+    list_display = (
+        'order_identifier',
+        'customer_name',
+        'sale_date',
+        'status',
+        'total_amount',
+        'total_items_count',
+        'created_by',
+        'created_at',
+    )
+    list_filter = ('status', 'sale_date', 'created_at')
+    search_fields = ('order_identifier', 'customer_name', 'customer_email', 'customer_phone', 'notes')
+    readonly_fields = ('order_identifier', 'total_amount', 'created_at', 'updated_at')
+    inlines = [SaleItemInline]
+    ordering = ('-sale_date', '-created_at')
+
+
+@admin.register(SaleItem)
+class SaleItemAdmin(admin.ModelAdmin):
+    list_display = ('id', 'sale', 'product', 'quantity', 'unit_price', 'subtotal', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('sale__order_identifier', 'product__name', 'product__sku')
+    readonly_fields = ('sale', 'product', 'quantity', 'unit_price', 'subtotal', 'created_at')
+
 
 

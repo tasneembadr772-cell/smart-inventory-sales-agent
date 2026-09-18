@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Sales Management | Orders & Revenue{% endblock %}
+
+{% block content %}
+<div class="inventory-container">
+    <!-- Header Section -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="breadcrumb-trail">
+                <a href="{% url 'authentication:dashboard' %}">Dashboard</a>
+                <span class="sep">/</span>
+                <span class="current">Sales Orders</span>
+            </div>
+            <h1 class="page-title">Sales Management</h1>
+            <p class="page-subtitle">Track commercial transactions, customer orders, revenue, and automated inventory decrements.</p>
+        </div>
+        <div class="header-actions">
+            <a href="{% url 'domain_app:inventory_dashboard' %}" class="btn btn-secondary">
+                <span class="btn-icon">📊</span> Inventory Dashboard
+            </a>
+            <a href="{% url 'domain_app:sale_create' %}" class="btn btn-primary" id="btnNewSale">
+                <span class="btn-icon">➕</span> Create New Sale
+            </a>
+        </div>
+    </div>
+
+    <!-- KPI Summary Grid -->
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-icon icon-blue">🧾</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Total Transactions</span>
+                <span class="kpi-value">{{ kpis.total_sales_count|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-green">✅</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Completed Sales</span>
+                <span class="kpi-value">{{ kpis.completed_sales_count|default:0 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-purple">💵</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Gross Revenue</span>
+                <span class="kpi-value">${{ kpis.total_revenue|floatformat:2 }}</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon icon-yellow">📦</div>
+            <div class="kpi-data">
+                <span class="kpi-label">Units Sold</span>
+                <span class="kpi-value">{{ kpis.total_units_sold|default:0 }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter & Live Search Toolbar -->
+    <div class="filter-toolbar card">
+        <form method="get" action="{% url 'domain_app:sale_list' %}" class="filter-form" id="saleFilterForm">
+            <div class="filter-group search-group">
+                <span class="search-icon">🔍</span>
+                {{ filter_form.search }}
+            </div>
+            <div class="filter-group">
+                {{ filter_form.status }}
+            </div>
+            <div class="filter-group">
+                {{ filter_form.date_from }}
+            </div>
+            <div class="filter-group">
+                {{ filter_form.date_to }}
+            </div>
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
+                <a href="{% url 'domain_app:sale_list' %}" class="btn btn-ghost btn-sm">Reset</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Sales Table -->
+    <div class="table-container card">
+        <table class="data-table" id="salesTable">
+            <thead>
+                <tr>
+                    <th>Order Identifier</th>
+                    <th>Date</th>
+                    <th>Customer</th>
+                    <th>Items / Qty</th>
+                    <th>Total Amount</th>
+                    <th>Status</th>
+                    <th>Processed By</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sale in page_obj %}
+                <tr>
+                    <td class="font-mono font-medium">
+                        <a href="{% url 'domain_app:sale_detail' pk=sale.pk %}" class="text-primary hover:underline">
+                            {{ sale.order_identifier }}
+                        </a>
+                    </td>
+                    <td>{{ sale.sale_date|date:"M d, Y H:i" }}</td>
+                    <td>
+                        <div class="cell-main">{{ sale.customer_name }}</div>
+                        {% if sale.customer_email %}
+                        <div class="cell-sub text-muted">{{ sale.customer_email }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge badge-secondary">{{ sale.items.count }} line item(s)</span>
+                        <span class="text-muted text-xs">({{ sale.total_items_count }} units)</span>
+                    </td>
+                    <td class="font-bold text-accent">${{ sale.total_amount|floatformat:2 }}</td>
+                    <td>
+                        {% if sale.status == 'COMPLETED' %}
+                            <span class="badge badge-success">Completed</span>
+                        {% elif sale.status == 'DRAFT' %}
+                            <span class="badge badge-warning">Draft</span>
+                        {% else %}
+                            <span class="badge badge-danger">Cancelled</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted">{{ sale.created_by.username|default:"System" }}</td>
+                    <td class="text-right">
+                        <a href="{% url 'domain_app:sale_detail' pk=sale.pk %}" class="btn btn-sm btn-secondary" title="View Sale Details">
+                            View Details &rarr;
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" class="empty-state">
+                        <div class="empty-content">
+                            <span class="empty-icon">🧾</span>
+                            <h3>No Sales Transactions Found</h3>
+                            <p>No orders matched your search criteria, or no sales have been recorded yet.</p>
+                            <a href="{% url 'domain_app:sale_create' %}" class="btn btn-primary btn-sm mt-3">
+                                Process First Sale
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <div class="pagination-container">
+            <div class="pagination-info">
+                Showing {{ page_obj.start_index }} - {{ page_obj.end_index }} of {{ page_obj.paginator.count }} sales
+            </div>
+            <div class="pagination-controls">
+                {% if page_obj.has_previous %}
+                    <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-ghost">&laquo; First</a>
+                    <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-ghost">&lsaquo; Prev</a>
+                {% endif %}
+
+                <span class="current-page">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+
+                {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-ghost">Next &rsaquo;</a>
+                    <a href="?page={{ page_obj.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-ghost">Last &raquo;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

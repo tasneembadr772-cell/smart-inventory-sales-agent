@@ -6,11 +6,13 @@ Encapsulates mutations away from views to satisfy clean architecture requirement
 """
 
 from decimal import Decimal
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+import uuid
 from django.core.exceptions import ValidationError
 from django.db import transaction, models
+from django.utils import timezone
 
-from .models import Category, Product, Supplier, InventoryTransaction
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
 
 _UNSET = object()
 
@@ -435,4 +437,210 @@ def delete_supplier(supplier: Supplier) -> None:
     Foreign key references in Product are set to NULL (on_delete=models.SET_NULL).
     """
     supplier.delete()
+
+
+# ==============================================================================
+# Sales Management Service Operations
+# ==============================================================================
+
+class SaleCreationError(DomainServiceError, ValidationError):
+    """Raised when sale creation validation or business invariant fails."""
+    pass
+
+
+def generate_order_identifier() -> str:
+    """
+    Generates a human-readable, unique sale order identifier.
+    Format: SALE-YYYYMMDD-XXXX (e.g., SALE-20260918-A7B2C1).
+    """
+    date_str = timezone.now().strftime('%Y%m%d')
+    unique_suffix = uuid.uuid4().hex[:6].upper()
+    return f"SALE-{date_str}-{unique_suffix}"
+
+
+@transaction.atomic
+def create_sale(
+    *,
+    customer_name: str,
+    items_data: List[Dict[str, Any]],
+    customer_email: str = "",
+    customer_phone: str = "",
+    sale_date: Optional[Any] = None,
+    status: str = Sale.Status.COMPLETED,
+    notes: str = "",
+    user=None,
+    order_identifier: Optional[str] = None,
+) -> Sale:
+    """
+    Creates and records a commercial sales transaction with ACID transactional safety.
+
+    Business Rules & Invariants:
+    1. Validation of customer details and non-empty items payload.
+    2. Prevention of duplicate items for the same product in a single sale transaction.
+    3. Concurrency-Safe Stock Validation:
+       - Obtains row-level locks via `Product.objects.select_for_update()` to serialize concurrent orders.
+       - Rejects transactions with `InsufficientStockError` if requested units exceed available stock.
+       - Prevents invalid, negative, or depleted stock states.
+    4. Backend Calculation of Totals:
+       - Evaluates line item subtotals as `Decimal(quantity) * Decimal(unit_price)`.
+       - Aggregates overall `total_amount` safely on the backend.
+    5. Inventory Mutation & Audit Trail:
+       - If status is `COMPLETED`, atomically decrements physical `product.stock_quantity`.
+       - Records an immutable `InventoryTransaction` of type `REMOVE` referencing the sale identifier.
+    """
+    # 1. Basic parameter sanitization
+    clean_cust_name = customer_name.strip() if customer_name else ""
+    if not clean_cust_name:
+        raise SaleCreationError({'customer_name': 'Customer name is required.'})
+
+    if not items_data or len(items_data) == 0:
+        raise SaleCreationError({'items': 'At least one line item is required to complete a sale.'})
+
+    if not order_identifier:
+        # Generate unique identifier with collision fallback
+        for _ in range(5):
+            candidate_id = generate_order_identifier()
+            if not Sale.objects.filter(order_identifier=candidate_id).exists():
+                order_identifier = candidate_id
+                break
+        if not order_identifier:
+            order_identifier = f"SALE-{int(timezone.now().timestamp())}"
+
+    # 2. Extract and validate unique product IDs in items_data
+    product_quantities: Dict[int, int] = {}
+    custom_prices: Dict[int, Optional[Decimal]] = {}
+
+    for index, item in enumerate(items_data):
+        product_id = item.get('product_id') or (item.get('product').pk if isinstance(item.get('product'), Product) else None)
+        if not product_id:
+            raise SaleCreationError({'items': f"Line item #{index + 1} does not specify a valid product."})
+
+        try:
+            qty = int(item.get('quantity', 0))
+        except (ValueError, TypeError):
+            raise SaleCreationError({'items': f"Line item #{index + 1} quantity must be an integer."})
+
+        if qty <= 0:
+            raise SaleCreationError({'items': f"Quantity for product must be greater than zero (Item #{index + 1})."})
+
+        if product_id in product_quantities:
+            raise SaleCreationError({
+                'items': f"Duplicate product line item detected. Please consolidate quantities for the same SKU."
+            })
+
+        product_quantities[product_id] = qty
+
+        # Optional custom unit price override (defaulting to product.price if not provided)
+        unit_price_val = item.get('unit_price')
+        if unit_price_val is not None:
+            try:
+                dec_price = Decimal(str(unit_price_val))
+                if dec_price < Decimal('0.00'):
+                    raise SaleCreationError({'items': f"Unit price cannot be negative (Item #{index + 1})."})
+                custom_prices[product_id] = dec_price
+            except Exception:
+                raise SaleCreationError({'items': f"Invalid unit price provided for item #{index + 1}."})
+        else:
+            custom_prices[product_id] = None
+
+    # 3. Lock products and validate stock availability (SELECT FOR UPDATE)
+    locked_products_qs = Product.objects.select_for_update().filter(pk__in=list(product_quantities.keys()))
+    locked_products_map = {p.pk: p for p in locked_products_qs}
+
+    # Verify that all requested product IDs exist
+    for pid in product_quantities:
+        if pid not in locked_products_map:
+            raise SaleCreationError({'items': f"Product with ID {pid} was not found."})
+
+    # Validate stock quantities for completed sales
+    if status == Sale.Status.COMPLETED:
+        insufficient_errors = []
+        for pid, requested_qty in product_quantities.items():
+            product = locked_products_map[pid]
+            if not product.is_active:
+                insufficient_errors.append(
+                    f"Product '{product.name}' ({product.sku}) is currently inactive and cannot be sold."
+                )
+            elif product.stock_quantity < requested_qty:
+                insufficient_errors.append(
+                    f"Insufficient stock for '{product.name}' (SKU: {product.sku}). "
+                    f"Requested: {requested_qty}, Available: {product.stock_quantity}."
+                )
+
+        if insufficient_errors:
+            raise InsufficientStockError("; ".join(insufficient_errors))
+
+    # 4. Compute totals and line item structures safely on backend
+    line_items_to_create = []
+    total_amount = Decimal('0.00')
+
+    for pid, qty in product_quantities.items():
+        product = locked_products_map[pid]
+        unit_price = custom_prices[pid] if custom_prices[pid] is not None else product.price
+        line_subtotal = Decimal(str(qty)) * Decimal(str(unit_price))
+        total_amount += line_subtotal
+
+        line_items_to_create.append({
+            'product': product,
+            'quantity': qty,
+            'unit_price': unit_price,
+            'subtotal': line_subtotal,
+        })
+
+    # 5. Create Sale header
+    sale = Sale(
+        order_identifier=order_identifier,
+        customer_name=clean_cust_name,
+        customer_email=customer_email.strip().lower() if customer_email else "",
+        customer_phone=customer_phone.strip() if customer_phone else "",
+        sale_date=sale_date if sale_date else timezone.now(),
+        status=status,
+        total_amount=total_amount,
+        notes=notes.strip() if notes else "",
+        created_by=user if user and user.is_authenticated else None,
+    )
+    sale.full_clean()
+    sale.save()
+
+    # 6. Create SaleItems & update inventory stock + audit ledger
+    for item_info in line_items_to_create:
+        product = item_info['product']
+        qty = item_info['quantity']
+
+        SaleItem.objects.create(
+            sale=sale,
+            product=product,
+            quantity=qty,
+            unit_price=item_info['unit_price'],
+            subtotal=item_info['subtotal'],
+        )
+
+        if status == Sale.Status.COMPLETED:
+            previous_stock = product.stock_quantity
+            new_stock = previous_stock - qty
+
+            # Invariant assertion
+            if new_stock < 0:
+                raise InsufficientStockError(
+                    f"Critical invariant violation: resulting stock cannot be negative for {product.sku}."
+                )
+
+            product.stock_quantity = new_stock
+            product.full_clean()
+            product.save(update_fields=['stock_quantity', 'updated_at'])
+
+            # Record stock movement audit trail
+            InventoryTransaction.objects.create(
+                product=product,
+                transaction_type=InventoryTransaction.TransactionType.REMOVE,
+                quantity=qty,
+                previous_stock=previous_stock,
+                new_stock=new_stock,
+                reference=sale.order_identifier,
+                notes=f"Order fulfillment: {qty} units sold to {sale.customer_name}.",
+                created_by=user if user and user.is_authenticated else None,
+            )
+
+    return sale
+
 

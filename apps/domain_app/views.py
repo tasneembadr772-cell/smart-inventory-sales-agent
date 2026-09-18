@@ -17,7 +17,7 @@ from django.http import JsonResponse
 from django.shortcuts import render, redirect
 from django.views.decorators.http import require_http_methods
 
-from apps.authentication.permissions import admin_required, manager_required
+from apps.authentication.permissions import admin_required, manager_required, role_required
 from .forms import (
     ProductForm,
     CategoryForm,
@@ -26,9 +26,11 @@ from .forms import (
     SupplierFilterForm,
     StockAdjustmentForm,
     TransactionFilterForm,
+    SaleFilterForm,
+    SaleCreateForm,
 )
-from .models import Product, Category, Supplier, InventoryTransaction
-from .services import InsufficientStockError, InvalidStockAdjustmentError
+from .models import Product, Category, Supplier, InventoryTransaction, Sale, SaleItem
+from .services import InsufficientStockError, InvalidStockAdjustmentError, SaleCreationError
 from . import selectors, services
 
 
@@ -748,5 +750,183 @@ def api_low_stock(request):
         'kpis': kpis,
         'low_stock_items': report,
     })
+
+
+# ==============================================================================
+# Sales Management Views
+# ==============================================================================
+
+@login_required(login_url=settings.LOGIN_URL)
+@require_http_methods(["GET"])
+def sale_list(request):
+    """
+    Renders the sales transactions ledger with searching, status/date filters,
+    KPI summary cards, and pagination.
+    Accessible to all authenticated roles (Admin, Manager, Standard User).
+    """
+    filter_form = SaleFilterForm(request.GET)
+    search_query = request.GET.get('search', '').strip()
+    status_filter = request.GET.get('status', '').strip()
+    date_from = request.GET.get('date_from', '').strip()
+    date_to = request.GET.get('date_to', '').strip()
+
+    sales_qs = selectors.get_sales_queryset(
+        user=request.user,
+        search=search_query if search_query else None,
+        status_filter=status_filter if status_filter else None,
+        date_from=date_from if date_from else None,
+        date_to=date_to if date_to else None,
+    )
+
+    kpis = selectors.get_sales_summary_kpis()
+
+    paginator = Paginator(sales_qs, 15)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    context = {
+        'page_obj': page_obj,
+        'filter_form': filter_form,
+        'kpis': kpis,
+        'search_query': search_query,
+        'status_filter': status_filter,
+        'date_from': date_from,
+        'date_to': date_to,
+    }
+    return render(request, 'domain_app/sale_list.html', context)
+
+
+@login_required(login_url=settings.LOGIN_URL)
+@require_http_methods(["GET"])
+def sale_detail(request, pk):
+    """
+    Displays full commercial details of a sale transaction, including line items,
+    unit prices, computed subtotals, customer info, and linked stock movement records.
+    """
+    sale = selectors.get_sale_by_id(pk)
+
+    # Fetch corresponding inventory audit transactions linked by reference (order_identifier)
+    inventory_transactions = InventoryTransaction.objects.filter(
+        reference=sale.order_identifier
+    ).select_related('product', 'created_by')
+
+    context = {
+        'sale': sale,
+        'items': sale.items.all(),
+        'inventory_transactions': inventory_transactions,
+    }
+    return render(request, 'domain_app/sale_detail.html', context)
+
+
+@login_required(login_url=settings.LOGIN_URL)
+@require_http_methods(["GET", "POST"])
+def sale_create(request):
+    """
+    Processes the creation of a new sale order transaction with multi-item selection.
+    
+    Validates:
+    - Customer information
+    - Active product availability and current physical stock levels
+    - Safe backend monetary calculations
+    - Automatic inventory deduction and audit trail creation
+    """
+    if request.method == 'POST':
+        form = SaleCreateForm(request.POST)
+        if form.is_valid():
+            customer_name = form.cleaned_data['customer_name']
+            customer_email = form.cleaned_data['customer_email']
+            customer_phone = form.cleaned_data['customer_phone']
+            notes = form.cleaned_data['notes']
+
+            # Process line items from form data (supporting both dynamic form arrays or JSON)
+            items_data = []
+
+            # 1. Check if JSON payload was submitted in 'items_json'
+            items_json_str = request.POST.get('items_json', '').strip()
+            if items_json_str:
+                try:
+                    parsed = json.loads(items_json_str)
+                    if isinstance(parsed, list):
+                        items_data = parsed
+                except Exception:
+                    form.add_error(None, "Invalid format for order items.")
+
+            # 2. Fallback / Standard POST list arrays: product_ids[] and quantities[]
+            if not items_data:
+                product_ids = request.POST.getlist('product_id[]') or request.POST.getlist('product_id')
+                quantities = request.POST.getlist('quantity[]') or request.POST.getlist('quantity')
+                unit_prices = request.POST.getlist('unit_price[]') or request.POST.getlist('unit_price')
+
+                for idx in range(len(product_ids)):
+                    pid_str = product_ids[idx].strip()
+                    if not pid_str:
+                        continue
+                    try:
+                        pid = int(pid_str)
+                        qty = int(quantities[idx]) if idx < len(quantities) else 1
+                        uprice = unit_prices[idx] if idx < len(unit_prices) and unit_prices[idx] else None
+                        items_data.append({
+                            'product_id': pid,
+                            'quantity': qty,
+                            'unit_price': uprice,
+                        })
+                    except (ValueError, TypeError):
+                        pass
+
+            if not items_data:
+                messages.error(request, "Please add at least one product line item to this sale.")
+            else:
+                try:
+                    sale = services.create_sale(
+                        customer_name=customer_name,
+                        customer_email=customer_email,
+                        customer_phone=customer_phone,
+                        notes=notes,
+                        items_data=items_data,
+                        user=request.user,
+                        status=Sale.Status.COMPLETED,
+                    )
+                    messages.success(
+                        request,
+                        f"Sale {sale.order_identifier} created successfully! Total: ${sale.total_amount:.2f}."
+                    )
+                    return redirect('domain_app:sale_detail', pk=sale.pk)
+
+                except InsufficientStockError as err:
+                    messages.error(request, f"Inventory Stock Error: {str(err)}")
+                except (SaleCreationError, ValidationError) as err:
+                    if hasattr(err, 'message_dict'):
+                        for field, errs in err.message_dict.items():
+                            messages.error(request, f"{field}: {', '.join(errs)}")
+                    else:
+                        messages.error(request, str(err))
+                except Exception as err:
+                    messages.error(request, f"An unexpected error occurred while processing the sale: {str(err)}")
+
+    else:
+        form = SaleCreateForm()
+
+    # Active products with positive stock for selection dropdown
+    active_products = Product.objects.filter(is_active=True).order_by('name')
+
+    # Prepare JSON serializable product catalog for the interactive ES6 frontend
+    products_json = json.dumps([
+        {
+            'id': p.id,
+            'name': p.name,
+            'sku': p.sku,
+            'price': str(p.price),
+            'stock': p.stock_quantity,
+        }
+        for p in active_products
+    ])
+
+    context = {
+        'form': form,
+        'active_products': active_products,
+        'products_json': products_json,
+    }
+    return render(request, 'domain_app/sale_create.html', context)
+
 
 
