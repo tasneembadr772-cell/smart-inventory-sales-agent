@@ -1,7 +1,14 @@
-from django.urls import path
+"""
+URL Configuration for the AI Agent application.
+Namespace: ai_agent
+"""
 
-app_name = 'ai_agent'
+from django.urls import path
+from . import views
+
+app_name = "ai_agent"
 
 urlpatterns = [
-    # AI Agent routes will be added here in upcoming sprints.
+    path("", views.agent_chat_view, name="chat"),
+    path("api/run/", views.agent_api_run, name="api_run"),
 ]
