@@ -12,6 +12,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import models
 from django.utils.text import slugify
+from django.utils import timezone
 
 
 class Supplier(models.Model):
@@ -114,7 +115,7 @@ class Supplier(models.Model):
 class Category(models.Model):
     """
     Categorical taxonomy grouping inventory products.
-    
+
     Database Integrity:
     - Unique name to prevent duplicate classifications.
     - Slug generation for SEO-friendly URLs.
@@ -694,4 +695,209 @@ class SaleItem(models.Model):
         self.clean()
         super().save(*args, **kwargs)
 
+
+# ==============================================================================
+# Purchase Order Models
+# ==============================================================================
+
+class PurchaseOrder(models.Model):
+    """
+    Commercial purchase order record for stock replenishment.
+
+    Database Integrity & Normalization:
+    - Globally unique order number.
+    - Foreign key to Supplier (on_delete=models.PROTECT).
+    - Status lifecycle from Draft to Received/Cancelled.
+    - Safe backend monetary total amount with database check constraints.
+    - Indexed on order_number, order_date, status, and created_at.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = 'DRAFT', 'Draft'
+        PENDING = 'PENDING', 'Pending'
+        APPROVED = 'APPROVED', 'Approved'
+        RECEIVED = 'RECEIVED', 'Received'
+        CANCELLED = 'CANCELLED', 'Cancelled'
+
+    order_number = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text='Globally unique purchase order identifier (e.g. PO-YYYYMMDD-XXXX).',
+    )
+    supplier = models.ForeignKey(
+        'Supplier',
+        on_delete=models.PROTECT,
+        related_name='purchase_orders',
+        db_index=True,
+        help_text='Vendor or supplier furnishing the inventory.',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True,
+        help_text='Lifecycle status of the purchase order.',
+    )
+    order_date = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text='Date when the purchase order was issued.',
+    )
+    total_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='Aggregate sum of all line item subtotals.',
+    )
+    notes = models.TextField(
+        blank=True,
+        default='',
+        help_text='Special instructions or commercial context.',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='purchase_orders_created',
+        help_text='Staff member who created the purchase order.',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+    )
+
+    class Meta:
+        verbose_name = 'Purchase Order'
+        verbose_name_plural = 'Purchase Orders'
+        ordering = ['-order_date', '-created_at']
+        indexes = [
+            models.Index(fields=['order_number'], name='idx_po_order_number'),
+            models.Index(fields=['order_date'], name='idx_po_order_date'),
+            models.Index(fields=['status'], name='idx_po_status'),
+            models.Index(fields=['-created_at'], name='idx_po_created_at'),
+            models.Index(fields=['supplier', '-order_date'], name='idx_po_supplier_date'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(total_amount__gte=Decimal('0.00')),
+                name='check_po_total_amount_non_negative',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(order_number__exact=''),
+                name='check_po_order_number_not_empty',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.order_number} - {self.supplier.name} (${self.total_amount})"
+
+    @property
+    def total_items_count(self) -> int:
+        """Total quantity of physical units across all line items."""
+        return sum(item.quantity for item in self.items.all())
+
+    def clean(self):
+        """Model-level validation."""
+        if self.order_number:
+            self.order_number = self.order_number.strip().upper()
+            if not self.order_number:
+                raise ValidationError({'order_number': 'Order number cannot be empty.'})
+        else:
+            raise ValidationError({'order_number': 'Order number is required.'})
+
+        if self.total_amount is not None and self.total_amount < Decimal('0.00'):
+            raise ValidationError({'total_amount': 'Total amount cannot be negative.'})
+
+    def save(self, *args, **kwargs):
+        """Execute validation before saving."""
+        self.clean()
+        super().save(*args, **kwargs)
+
+
+class PurchaseOrderItem(models.Model):
+    """
+    Individual line item associating a product SKU with a purchase order.
+    """
+    purchase_order = models.ForeignKey(
+        PurchaseOrder,
+        on_delete=models.CASCADE,
+        related_name='items',
+        db_index=True,
+        help_text='Parent purchase order.',
+    )
+    product = models.ForeignKey(
+        'Product',
+        on_delete=models.PROTECT,
+        related_name='purchase_order_items',
+        db_index=True,
+        help_text='Inventory product item to be purchased.',
+    )
+    quantity = models.PositiveIntegerField(
+        help_text='Quantity of units to purchase (must be >= 1).',
+    )
+    unit_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='Agreed unit cost for the purchase.',
+    )
+    subtotal = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='Line total computed as quantity * unit_cost.',
+    )
+
+    class Meta:
+        verbose_name = 'Purchase Order Item'
+        verbose_name_plural = 'Purchase Order Items'
+        ordering = ['id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['purchase_order', 'product'],
+                name='unique_product_per_po',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name='check_po_item_qty_positive',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(unit_cost__gte=Decimal('0.00')),
+                name='check_po_item_unit_cost_non_neg',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(subtotal__gte=Decimal('0.00')),
+                name='check_po_item_subtotal_non_neg',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['purchase_order', 'product'], name='idx_po_item_po_prod'),
+            models.Index(fields=['product'], name='idx_po_item_prod'),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.quantity}x {self.product.name} @ ${self.unit_cost} (${self.subtotal})"
+
+    def clean(self):
+        """Validate numeric integrity and subtotal correctness."""
+        if self.quantity is not None and self.quantity <= 0:
+            raise ValidationError({'quantity': 'Quantity must be at least 1 unit.'})
+
+        if self.unit_cost is not None and self.unit_cost < Decimal('0.00'):
+            raise ValidationError({'unit_cost': 'Unit cost cannot be negative.'})
+
+        if self.quantity is not None and self.unit_cost is not None:
+            expected_subtotal = Decimal(str(self.quantity)) * Decimal(str(self.unit_cost))
+            if self.subtotal is None or self.subtotal != expected_subtotal:
+                self.subtotal = expected_subtotal
+
+    def save(self, *args, **kwargs):
+        """Execute validation and safe subtotal calculation before persisting."""
+        if self.quantity is not None and self.unit_cost is not None:
+            self.subtotal = Decimal(str(self.quantity)) * Decimal(str(self.unit_cost))
+        self.clean()
+        super().save(*args, **kwargs)
 

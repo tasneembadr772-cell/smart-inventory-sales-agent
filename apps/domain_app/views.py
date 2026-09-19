@@ -28,9 +28,13 @@ from .forms import (
     TransactionFilterForm,
     SaleFilterForm,
     SaleCreateForm,
+    PurchaseOrderForm,
+    PurchaseOrderItemFormSet,
+    PurchaseOrderFilterForm,
 )
-from .models import Product, Category, Supplier, InventoryTransaction, Sale, SaleItem
-from .services import InsufficientStockError, InvalidStockAdjustmentError, SaleCreationError
+from .models import Product, Category, Supplier, InventoryTransaction, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
+
+from .services import InsufficientStockError, InvalidStockAdjustmentError, SaleCreationError, PurchaseOrderError
 from . import selectors, services
 
 
@@ -823,7 +827,7 @@ def sale_detail(request, pk):
 def sale_create(request):
     """
     Processes the creation of a new sale order transaction with multi-item selection.
-    
+
     Validates:
     - Customer information
     - Active product availability and current physical stock levels
@@ -927,6 +931,139 @@ def sale_create(request):
         'products_json': products_json,
     }
     return render(request, 'domain_app/sale_create.html', context)
+
+
+# ==============================================================================
+# Purchase Order Views
+# ==============================================================================
+
+@login_required(login_url=settings.LOGIN_URL)
+@require_http_methods(["GET"])
+def purchase_order_list(request):
+    """
+    Renders the purchase order list with filtering and pagination.
+    """
+    filter_form = PurchaseOrderFilterForm(request.GET)
+    search_query = request.GET.get('search', '').strip()
+    status_filter = request.GET.get('status', '').strip()
+
+    po_qs = selectors.get_purchase_orders_queryset(
+        user=request.user,
+        search=search_query if search_query else None,
+        status_filter=status_filter if status_filter else None,
+    )
+
+    kpis = selectors.get_purchase_order_kpis()
+
+    paginator = Paginator(po_qs, 15)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    context = {
+        'page_obj': page_obj,
+        'filter_form': filter_form,
+        'kpis': kpis,
+        'search_query': search_query,
+        'status_filter': status_filter,
+    }
+    return render(request, 'domain_app/purchase_order_list.html', context)
+
+
+@login_required(login_url=settings.LOGIN_URL)
+@require_http_methods(["GET"])
+def purchase_order_detail(request, pk):
+    """
+    Displays full details of a purchase order, including line items.
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+
+    context = {
+        'po': po,
+        'items': po.items.all(),
+    }
+    return render(request, 'domain_app/purchase_order_detail.html', context)
+
+
+@manager_required
+@require_http_methods(["GET", "POST"])
+def purchase_order_create(request):
+    """
+    Creates a new purchase order.
+    """
+    if request.method == 'POST':
+        form = PurchaseOrderForm(request.POST)
+        formset = PurchaseOrderItemFormSet(request.POST)
+
+        if form.is_valid() and formset.is_valid():
+            supplier = form.cleaned_data['supplier']
+            notes = form.cleaned_data.get('notes', '')
+
+            items_data = []
+            for item_form in formset:
+                if item_form.cleaned_data and not item_form.cleaned_data.get('DELETE', False):
+                    items_data.append({
+                        'product_id': item_form.cleaned_data['product'].pk,
+                        'quantity': item_form.cleaned_data['quantity'],
+                        'unit_cost': item_form.cleaned_data['unit_cost'],
+                    })
+
+            if not items_data:
+                messages.error(request, "Please add at least one line item.")
+            else:
+                try:
+                    po = services.create_purchase_order(
+                        supplier=supplier,
+                        items_data=items_data,
+                        status=PurchaseOrder.Status.DRAFT,
+                        notes=notes,
+                        user=request.user,
+                    )
+                    messages.success(
+                        request,
+                        f"Purchase Order {po.order_number} created successfully!"
+                    )
+                    return redirect('domain_app:po_detail', pk=po.pk)
+                except (PurchaseOrderError, ValidationError) as err:
+                    if hasattr(err, 'message_dict'):
+                        for field, errs in err.message_dict.items():
+                            messages.error(request, f"{field}: {', '.join(errs)}")
+                    else:
+                        messages.error(request, str(err))
+    else:
+        form = PurchaseOrderForm()
+        formset = PurchaseOrderItemFormSet()
+
+    context = {
+        'form': form,
+        'formset': formset,
+    }
+    return render(request, 'domain_app/purchase_order_create.html', context)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_update_status(request, pk):
+    """
+    Updates the status of a purchase order.
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    new_status = request.POST.get('status')
+
+    if not new_status or new_status not in PurchaseOrder.Status.values:
+        messages.error(request, "Invalid status.")
+        return redirect('domain_app:po_detail', pk=pk)
+
+    try:
+        updated_po = services.update_purchase_order_status(
+            po=po,
+            new_status=new_status,
+            user=request.user,
+        )
+        messages.success(request, f"Purchase Order status updated to {updated_po.get_status_display()}.")
+    except PurchaseOrderError as err:
+        messages.error(request, str(err))
+
+    return redirect('domain_app:po_detail', pk=pk)
 
 
 

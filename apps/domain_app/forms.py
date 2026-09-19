@@ -7,7 +7,7 @@ Provides HTML widget styling, validation error mapping, and form sanitation.
 from decimal import Decimal
 from django import forms
 from django.db import models
-from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem
+from .models import Category, Product, Supplier, InventoryTransaction, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 
 
 class SupplierForm(forms.ModelForm):
@@ -103,7 +103,7 @@ class CategoryForm(forms.ModelForm):
         name = self.cleaned_data.get('name', '').strip()
         if not name:
             raise forms.ValidationError("Category name cannot be empty.")
-        
+
         # Check uniqueness case-insensitively
         qs = Category.objects.filter(name__iexact=name)
         if self.instance.pk:
@@ -505,3 +505,116 @@ class SaleCreateForm(forms.Form):
         return name
 
 
+# ==============================================================================
+# Purchase Order Forms
+# ==============================================================================
+
+class PurchaseOrderFilterForm(forms.Form):
+    """GET filter form for purchase orders list."""
+    STATUS_CHOICES = [
+        ('', 'All Statuses'),
+        (PurchaseOrder.Status.DRAFT, 'Draft'),
+        (PurchaseOrder.Status.PENDING, 'Pending'),
+        (PurchaseOrder.Status.APPROVED, 'Approved'),
+        (PurchaseOrder.Status.RECEIVED, 'Received'),
+        (PurchaseOrder.Status.CANCELLED, 'Cancelled'),
+    ]
+
+    search = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'search-input',
+            'placeholder': 'Search Order ID or Supplier...',
+            'autocomplete': 'off',
+            'id': 'poSearchInput',
+        })
+    )
+    status = forms.ChoiceField(
+        choices=STATUS_CHOICES,
+        required=False,
+        widget=forms.Select(attrs={
+            'class': 'filter-select',
+            'id': 'poStatusSelect',
+        })
+    )
+
+
+class PurchaseOrderForm(forms.ModelForm):
+    """
+    Header form for creating a new Purchase Order.
+    """
+    class Meta:
+        model = PurchaseOrder
+        fields = ['supplier', 'notes']
+        widgets = {
+            'supplier': forms.Select(attrs={
+                'class': 'form-select',
+                'id': 'poSupplierSelect',
+                'required': True,
+            }),
+            'notes': forms.Textarea(attrs={
+                'class': 'form-textarea',
+                'rows': 2,
+                'placeholder': 'Optional notes or instructions...',
+                'id': 'poNotes',
+            }),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['supplier'].queryset = Supplier.objects.filter(is_active=True).order_by('name')
+
+
+class PurchaseOrderItemForm(forms.Form):
+    """
+    Individual line-item form for a single product within a purchase order.
+    """
+    product = forms.ModelChoiceField(
+        queryset=Product.objects.filter(is_active=True).select_related('category').order_by('name'),
+        required=True,
+        empty_label='Select a product...',
+        widget=forms.Select(attrs={
+            'class': 'form-select po-item-product',
+        })
+    )
+    quantity = forms.IntegerField(
+        min_value=1,
+        widget=forms.NumberInput(attrs={
+            'class': 'form-input po-item-qty',
+            'placeholder': '1',
+            'min': '1',
+            'step': '1',
+        })
+    )
+    unit_cost = forms.DecimalField(
+        required=True,
+        min_value=Decimal('0.00'),
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={
+            'class': 'form-input po-item-cost',
+            'placeholder': '0.00',
+            'step': '0.01',
+            'min': '0.00',
+        })
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        product = cleaned.get('product')
+
+        if product and not product.is_active:
+            self.add_error('product', f"'{product.name}' is inactive.")
+
+        return cleaned
+
+
+# Inline formset: minimum 1 item, up to 20 line items per PO
+PurchaseOrderItemFormSet = forms.formset_factory(
+    PurchaseOrderItemForm,
+    extra=1,
+    min_num=1,
+    max_num=20,
+    validate_min=True,
+    can_delete=False,
+)
