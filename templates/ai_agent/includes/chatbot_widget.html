@@ -1,0 +1,71 @@
+{% load static %}
+{% if user.is_authenticated %}
+<!-- ==============================================================================
+     Embedded Context-Aware AI Chatbot UI Component
+     Rendered exclusively for authenticated users across all pages.
+     ============================================================================== -->
+<div id="nexus-chat-widget-root">
+    <!-- CSRF Token for Asynchronous Fetch Requests -->
+    {% csrf_token %}
+
+    <!-- Floating Chat Launcher Button -->
+    <button id="nexus-chat-launcher" class="nexus-chat-launcher" type="button" aria-label="Open Inventory AI Assistant">
+        <span class="nexus-chat-launcher-icon">🤖</span>
+        <span class="nexus-chat-launcher-text">Ask AI Assistant</span>
+        <span id="nexus-chat-launcher-badge" class="nexus-chat-launcher-badge" style="display: none;">0</span>
+    </button>
+
+    <!-- Floating Chat Window / Drawer -->
+    <div id="nexus-chat-window" class="nexus-chat-window" role="dialog" aria-labelledby="nexus-chat-title" aria-modal="true">
+        <!-- Header -->
+        <div class="nexus-chat-header">
+            <div class="nexus-chat-header-title">
+                <div class="nexus-chat-avatar">⚡</div>
+                <div class="nexus-chat-header-text">
+                    <h3 id="nexus-chat-title">Nexus Assistant</h3>
+                    <div class="nexus-chat-status">
+                        <span class="nexus-chat-status-dot"></span>
+                        <span>Autonomous Agent Active</span>
+                    </div>
+                </div>
+            </div>
+            <div class="nexus-chat-header-actions">
+                <button id="nexus-chat-clear-btn" class="nexus-chat-btn-icon" type="button" title="Clear Conversation">🗑️</button>
+                <button id="nexus-chat-close-btn" class="nexus-chat-btn-icon" type="button" title="Close Assistant">✕</button>
+            </div>
+        </div>
+
+        <!-- Live Application Context Bar -->
+        <div id="nexus-chat-context-bar" class="nexus-chat-context-bar">
+            <span class="nexus-chat-role-pill">{{ user.get_role_display }}</span>
+            <div class="nexus-chat-context-kpi">
+                <span class="nexus-chat-context-item">Connecting...</span>
+            </div>
+        </div>
+
+        <!-- Scrollable Message Stream -->
+        <div id="nexus-chat-messages" class="nexus-chat-messages" role="log" aria-live="polite"></div>
+
+        <!-- Quick Prompt Chips -->
+        <div id="nexus-chat-suggestions" class="nexus-chat-suggestions"></div>
+
+        <!-- Input Footer Form -->
+        <div class="nexus-chat-footer">
+            <form id="nexus-chat-form" class="nexus-chat-form">
+                <textarea 
+                    id="nexus-chat-input" 
+                    class="nexus-chat-input" 
+                    placeholder="Ask about inventory, low-stock items, or restock orders..." 
+                    rows="1" 
+                    maxlength="1000"
+                    aria-label="Message to Nexus Assistant"
+                ></textarea>
+                <button id="nexus-chat-send-btn" class="nexus-chat-btn-send" type="submit" aria-label="Send Message">
+                    <span>➔</span>
+                </button>
+            </form>
+            <div class="nexus-chat-hint">Press Enter to send, Shift+Enter for new line</div>
+        </div>
+    </div>
+</div>
+{% endif %}

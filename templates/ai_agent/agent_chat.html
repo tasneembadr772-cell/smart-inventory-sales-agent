@@ -13,10 +13,13 @@
                 Submit high-level goals. The agent uses backend tool calling to analyze stock, compute deficits, and prepare draft purchase orders.
             </p>
         </div>
-        <div>
+        <div style="display: flex; align-items: center; gap: 10px;">
             <span class="role-badge role-badge-{{ user.role|lower }}" style="padding: 0.5rem 1rem; border-radius: 9999px; font-weight: 600;">
                 Role: {{ user.get_role_display }}
             </span>
+            <button type="button" class="btn btn-secondary" onclick="window.inventoryChatbot && window.inventoryChatbot.toggleChat(true);" style="padding: 0.5rem 1rem; cursor: pointer; border-radius: 8px; font-weight: 600;">
+                💬 Launch Floating Drawer
+            </button>
         </div>
     </div>
 
