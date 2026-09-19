@@ -26,6 +26,9 @@
             <a href="{% url 'domain_app:product_list' %}" class="btn btn-secondary" title="View all catalog products">
                 <span class="btn-icon">📦</span> All Products
             </a>
+            <button type="button" class="btn btn-secondary" onclick="window.inventoryChatbot ? window.inventoryChatbot.toggleChat(true) : window.location.href='{% url 'ai_agent:chat' %}';" title="Ask AI Agent to audit stock and prepare purchase orders">
+                <span class="btn-icon">🤖</span> AI Copilot
+            </button>
             {% if user.role == 'ADMIN' or user.role == 'MANAGER' or user.is_superuser %}
             <a href="{% url 'domain_app:product_create' %}" class="btn btn-primary" title="Create a new inventory SKU">
                 <span class="btn-icon">➕</span> Add Product
