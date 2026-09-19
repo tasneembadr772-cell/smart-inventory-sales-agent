@@ -98,6 +98,8 @@ class AgentService:
         goal: str,
         confirmed_actions: Optional[List[str]] = None,
         auto_confirm: bool = False,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> AgentResult:
         """
         Executes the agentic tool calling loop to accomplish the requested user goal.
@@ -106,6 +108,8 @@ class AgentService:
             goal: Natural language goal (e.g. "Check low stock products and prepare draft purchase orders").
             confirmed_actions: List of tool names that the user has explicitly pre-approved or confirmed.
             auto_confirm: If True, bypasses confirmation pauses (for automated tests or batch tasks).
+            chat_history: Optional list of prior conversation messages [{"role": "user"|"assistant", "content": "..."}].
+            context: Optional dictionary of application context (e.g. user role, inventory KPIs, active page).
 
         Returns:
             AgentResult detailing execution status, final response, steps, and tool outputs.
@@ -149,7 +153,39 @@ class AgentService:
         iteration = 0
         steps: List[Dict[str, Any]] = []
         tools_executed: List[str] = []
-        current_input: Any = goal
+
+        # Construct context-aware initial prompt if conversation history or context is supplied
+        context_blocks = []
+        if context:
+            user_info = context.get("user") or {}
+            inv_info = context.get("inventory") or {}
+            summary_items = []
+            if user_info.get("role"):
+                summary_items.append(f"User Role: {user_info.get('role')}")
+            if inv_info:
+                inv_str = ", ".join(f"{k}: {v}" for k, v in inv_info.items() if v is not None)
+                if inv_str:
+                    summary_items.append(f"Live Inventory Snapshot: {inv_str}")
+            if context.get("current_page"):
+                summary_items.append(f"Current Page: {context.get('current_page')}")
+            if summary_items:
+                context_blocks.append("[System Session Context: " + " | ".join(summary_items) + "]")
+
+        if chat_history:
+            history_lines = ["[Recent Conversation History]"]
+            for turn in chat_history[-6:]:
+                role = "User" if turn.get("role") == "user" else "Assistant"
+                content = (turn.get("content") or "").strip()
+                if content:
+                    history_lines.append(f"{role}: {content}")
+            if len(history_lines) > 1:
+                context_blocks.append("\n".join(history_lines))
+
+        if context_blocks:
+            context_blocks.append(f"[Current Request]\n{goal}")
+            current_input: Any = "\n\n".join(context_blocks)
+        else:
+            current_input = goal
 
         logger.info(
             "AgentService starting loop for user '%s' (role: %s) with goal: '%s'",

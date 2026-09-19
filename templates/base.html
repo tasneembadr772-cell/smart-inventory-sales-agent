@@ -14,6 +14,7 @@
 
     <!-- Main Stylesheet -->
     <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    <link rel="stylesheet" href="{% static 'css/chatbot.css' %}">
     
     {% block extra_css %}{% endblock %}
 </head>
@@ -86,8 +87,12 @@
         </div>
     </footer>
 
+    <!-- Embedded Context-Aware AI Chatbot UI -->
+    {% include "ai_agent/includes/chatbot_widget.html" %}
+
     <!-- Main Scripts -->
     <script src="{% static 'js/main.js' %}" defer></script>
+    <script src="{% static 'js/chatbot.js' %}" defer></script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>
