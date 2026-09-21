@@ -903,6 +903,15 @@ class PurchaseOrderItem(models.Model):
             if self.subtotal is None or self.subtotal != expected_subtotal:
                 self.subtotal = expected_subtotal
 
+        # Validate that product belongs to the PO's supplier if product has a supplier assigned
+        if hasattr(self, 'purchase_order') and self.purchase_order and hasattr(self, 'product') and self.product:
+            po_supplier_id = getattr(self.purchase_order, 'supplier_id', None)
+            prod_supplier_id = getattr(self.product, 'supplier_id', None)
+            if prod_supplier_id and po_supplier_id and prod_supplier_id != po_supplier_id:
+                raise ValidationError({
+                    'product': f"Product '{self.product.name}' belongs to a different supplier."
+                })
+
     def save(self, *args, **kwargs):
         """Execute validation and safe subtotal calculation before persisting."""
         if self.quantity is not None and self.unit_cost is not None:

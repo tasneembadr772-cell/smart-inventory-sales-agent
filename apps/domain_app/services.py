@@ -744,6 +744,14 @@ def create_purchase_order(
 
     for pid, qty in product_quantities.items():
         product = products_map[pid]
+        if product.supplier_id and product.supplier_id != supplier.pk:
+            supplier_name = product.supplier.name if product.supplier else str(product.supplier_id)
+            raise PurchaseOrderError({
+                'items': (
+                    f"Product '{product.name}' (SKU: {product.sku}) belongs to a different supplier ('{supplier_name}'), "
+                    f"not requested supplier '{supplier.name}'."
+                )
+            })
         unit_cost = unit_costs[pid]
         line_subtotal = Decimal(str(qty)) * unit_cost
         total_amount += line_subtotal

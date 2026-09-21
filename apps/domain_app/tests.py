@@ -2037,6 +2037,125 @@ class PurchaseOrderSecurityAndWorkflowTestCase(TestCase):
             reverse('domain_app:po_update_status', kwargs={'pk': 42})
         )
 
+    def test_create_purchase_order_rejects_products_from_different_supplier(self):
+        """Service layer must reject PO line items whose product belongs to a different supplier."""
+        other_supplier = Supplier.objects.create(
+            name='Second Vendor Corp',
+            email='vendor2@example.com',
+            phone='+1-555-8822',
+        )
+        other_product = Product.objects.create(
+            name='Competing GPU SKU',
+            sku='GPU-COMP-002',
+            category=self.category,
+            supplier=other_supplier,
+            price=Decimal('350.00'),
+            stock_quantity=5,
+            reorder_level=2,
+        )
+        # Attempt to order other_product under self.active_supplier
+        items = [{'product_id': other_product.id, 'quantity': 2, 'unit_cost': Decimal('300.00')}]
+        with self.assertRaises(PurchaseOrderError) as ctx:
+            services.create_purchase_order(
+                supplier=self.active_supplier,
+                items_data=items,
+                user=self.manager,
+            )
+        self.assertIn("different supplier", str(ctx.exception).lower())
+
+    def test_purchase_order_item_clean_rejects_product_from_different_supplier(self):
+        """PurchaseOrderItem.clean() rejects products belonging to another supplier."""
+        other_supplier = Supplier.objects.create(
+            name='Third Vendor LLC',
+            email='vendor3@example.com',
+            phone='+1-555-8833',
+        )
+        other_product = Product.objects.create(
+            name='Third Party Part',
+            sku='PART-TP-003',
+            category=self.category,
+            supplier=other_supplier,
+            price=Decimal('20.00'),
+            stock_quantity=10,
+            reorder_level=5,
+        )
+        po = PurchaseOrder.objects.create(
+            order_number='PO-CLEAN-SUPP-DIFF',
+            supplier=self.active_supplier,
+            status=PurchaseOrder.Status.DRAFT,
+            total_amount=Decimal('40.00'),
+        )
+        item = PurchaseOrderItem(
+            purchase_order=po,
+            product=other_product,
+            quantity=2,
+            unit_cost=Decimal('20.00'),
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            item.clean()
+        self.assertIn('product', ctx.exception.message_dict)
+
+    def test_product_deletion_protected_when_referenced_by_purchase_order(self):
+        """Product cannot be deleted if a PurchaseOrderItem references it (PROTECT integrity)."""
+        services.create_purchase_order(
+            supplier=self.active_supplier,
+            items_data=[{'product_id': self.product.id, 'quantity': 5, 'unit_cost': Decimal('50.00')}],
+            user=self.manager,
+        )
+        with self.assertRaises(models.ProtectedError):
+            self.product.delete()
+
+    def test_product_deletion_view_handles_protected_error_gracefully(self):
+        """product_delete view catches ProtectedError and redirects with warning instead of 500."""
+        admin_user = User.objects.create_user(
+            username='po_admin_test',
+            email='po_admin@test.com',
+            password='Password123!',
+            role=User.Role.ADMIN,
+        )
+        services.create_purchase_order(
+            supplier=self.active_supplier,
+            items_data=[{'product_id': self.product.id, 'quantity': 3, 'unit_cost': Decimal('50.00')}],
+            user=self.manager,
+        )
+        self.client.force_login(admin_user)
+        delete_url = reverse('domain_app:product_delete', kwargs={'pk': self.product.pk})
+        resp = self.client.post(delete_url, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        # Product still exists
+        self.assertTrue(Product.objects.filter(pk=self.product.pk).exists())
+        # Message was displayed
+        messages_list = list(resp.context['messages'])
+        self.assertTrue(any("Cannot delete product" in str(m) for m in messages_list))
+
+    def test_supplier_deletion_protected_when_referenced_by_purchase_order(self):
+        """Supplier cannot be deleted if a PurchaseOrder references it (PROTECT integrity)."""
+        services.create_purchase_order(
+            supplier=self.active_supplier,
+            items_data=[{'product_id': self.product.id, 'quantity': 2, 'unit_cost': Decimal('50.00')}],
+            user=self.manager,
+        )
+        with self.assertRaises(models.ProtectedError):
+            self.active_supplier.delete()
+
+    def test_supplier_deletion_view_handles_protected_error_gracefully(self):
+        """supplier_delete view catches ProtectedError and redirects with warning instead of 500."""
+        services.create_purchase_order(
+            supplier=self.active_supplier,
+            items_data=[{'product_id': self.product.id, 'quantity': 2, 'unit_cost': Decimal('50.00')}],
+            user=self.manager,
+        )
+        self.client.force_login(self.manager)
+        delete_url = reverse('domain_app:supplier_delete', kwargs={'pk': self.active_supplier.pk})
+        resp = self.client.post(delete_url, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        # Supplier still exists
+        self.assertTrue(Supplier.objects.filter(pk=self.active_supplier.pk).exists())
+        # Message was displayed
+        messages_list = list(resp.context['messages'])
+        self.assertTrue(any("Cannot delete supplier" in str(m) for m in messages_list))
+
+
 
 
 

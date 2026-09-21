@@ -13,6 +13,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
+from django.db import models
 from django.http import JsonResponse
 from django.shortcuts import render, redirect
 from django.views.decorators.http import require_http_methods
@@ -204,9 +205,17 @@ def product_delete(request, pk: int):
     if request.method == 'POST':
         product_name = product.name
         product_sku = product.sku
-        services.delete_product(product)
-        messages.success(request, f"Product '{product_name}' (SKU: {product_sku}) was permanently deleted.")
-        return redirect('domain_app:product_list')
+        try:
+            services.delete_product(product)
+            messages.success(request, f"Product '{product_name}' (SKU: {product_sku}) was permanently deleted.")
+            return redirect('domain_app:product_list')
+        except models.ProtectedError:
+            messages.error(
+                request,
+                f"Cannot delete product '{product_name}' (SKU: {product_sku}) because it is referenced "
+                f"in sales, purchase orders, or inventory transaction history."
+            )
+            return redirect('domain_app:product_detail', pk=product.pk)
 
     context = {
         'product': product,
@@ -475,9 +484,16 @@ def supplier_delete(request, pk: int):
 
     if request.method == 'POST':
         supplier_name = supplier.name
-        services.delete_supplier(supplier)
-        messages.success(request, f"Supplier '{supplier_name}' was deleted successfully.")
-        return redirect('domain_app:supplier_list')
+        try:
+            services.delete_supplier(supplier)
+            messages.success(request, f"Supplier '{supplier_name}' was deleted successfully.")
+            return redirect('domain_app:supplier_list')
+        except models.ProtectedError:
+            messages.error(
+                request,
+                f"Cannot delete supplier '{supplier_name}' because it has associated purchase orders."
+            )
+            return redirect('domain_app:supplier_detail', pk=supplier.pk)
 
     context = {
         'supplier': supplier,
