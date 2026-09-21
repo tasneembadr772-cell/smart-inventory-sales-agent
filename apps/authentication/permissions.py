@@ -30,13 +30,14 @@ def role_required(*allowed_roles):
                 )
 
             # Check if user has an allowed role or is superuser
-            if request.user.is_superuser or request.user.role in allowed_roles:
+            if request.user.has_role(*allowed_roles):
                 return view_func(request, *args, **kwargs)
 
             # Violation of role boundary -> HTTP 403 Forbidden
+            allowed_names = [str(getattr(r, 'label', getattr(r, 'name', r))) for r in allowed_roles]
             raise PermissionDenied(
                 f"Access denied. This action requires one of the following roles: "
-                f"{', '.join(allowed_roles)}. Your current role is: {request.user.get_role_display()}."
+                f"{', '.join(allowed_names)}. Your current role is: {request.user.get_role_display()}."
             )
 
         return _wrapped_view
@@ -55,6 +56,15 @@ def manager_required(view_func):
     return role_required(User.Role.ADMIN, User.Role.MANAGER)(view_func)
 
 
+def standard_required(view_func):
+    """
+    Decorator allowing access to Standard, Sales, Cashier, Manager, and Admin users.
+    Restricts anonymous unauthenticated access.
+    """
+    from .models import User
+    return role_required(User.Role.STANDARD, User.Role.MANAGER, User.Role.ADMIN)(view_func)
+
+
 class RoleRequiredMixin(AccessMixin):
     """
     CBV mixin verifying that the current user has one of the allowed roles.
@@ -65,9 +75,10 @@ class RoleRequiredMixin(AccessMixin):
         if not request.user.is_authenticated:
             return self.handle_no_permission()
 
-        if not (request.user.is_superuser or request.user.role in self.allowed_roles):
+        if not request.user.has_role(*self.allowed_roles):
+            allowed_names = [str(getattr(r, 'label', getattr(r, 'name', r))) for r in self.allowed_roles]
             raise PermissionDenied(
-                f"Access denied. Allowed roles: {', '.join(self.allowed_roles)}. "
+                f"Access denied. Allowed roles: {', '.join(allowed_names)}. "
                 f"Your role: {request.user.get_role_display()}."
             )
 

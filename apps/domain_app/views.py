@@ -1066,4 +1066,92 @@ def purchase_order_update_status(request, pk):
     return redirect('domain_app:po_detail', pk=pk)
 
 
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_approve(request, pk: int):
+    """
+    Workflow action: Approves a pending Purchase Order.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    try:
+        updated_po = services.update_purchase_order_status(
+            po=po,
+            new_status=PurchaseOrder.Status.APPROVED,
+            user=request.user,
+        )
+        messages.success(request, f"Purchase Order {updated_po.order_number} has been approved.")
+    except PurchaseOrderError as err:
+        messages.error(request, str(err))
+    return redirect('domain_app:po_detail', pk=pk)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_receive(request, pk: int):
+    """
+    Workflow action: Receives an approved Purchase Order and updates inventory stock.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    try:
+        updated_po = services.update_purchase_order_status(
+            po=po,
+            new_status=PurchaseOrder.Status.RECEIVED,
+            user=request.user,
+        )
+        messages.success(
+            request,
+            f"Purchase Order {updated_po.order_number} received successfully! Inventory stock has been incremented."
+        )
+    except PurchaseOrderError as err:
+        messages.error(request, str(err))
+    return redirect('domain_app:po_detail', pk=pk)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_cancel(request, pk: int):
+    """
+    Workflow action: Cancels a Purchase Order with reason recording.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    reason = request.POST.get('reason', '').strip()
+    if reason:
+        existing_notes = po.notes or ""
+        po.notes = f"{existing_notes}\n[Cancellation Reason]: {reason}".strip()
+        po.save(update_fields=['notes', 'updated_at'])
+
+    try:
+        updated_po = services.update_purchase_order_status(
+            po=po,
+            new_status=PurchaseOrder.Status.CANCELLED,
+            user=request.user,
+        )
+        messages.warning(request, f"Purchase Order {updated_po.order_number} has been cancelled.")
+    except PurchaseOrderError as err:
+        messages.error(request, str(err))
+    return redirect('domain_app:po_detail', pk=pk)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_delete(request, pk: int):
+    """
+    Deletes a Draft or Cancelled Purchase Order.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    if po.status not in (PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.CANCELLED):
+        messages.error(request, "Only Draft or Cancelled purchase orders can be deleted.")
+        return redirect('domain_app:po_detail', pk=pk)
+
+    order_num = po.order_number
+    po.delete()
+    messages.success(request, f"Purchase Order {order_num} was permanently deleted.")
+    return redirect('domain_app:purchase_order_list')
+
+
+
 

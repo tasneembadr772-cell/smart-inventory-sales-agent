@@ -82,13 +82,35 @@ class User(AbstractUser):
         """Returns True if user has Standard User role."""
         return self.is_authenticated and self.role == self.Role.STANDARD
 
+    @property
+    def is_sales_role(self) -> bool:
+        """Returns True if user has Standard / Sales role."""
+        return self.is_standard_role
+
+    @property
+    def is_cashier_role(self) -> bool:
+        """Returns True if user has Standard / Cashier role."""
+        return self.is_standard_role
+
     def has_role(self, *allowed_roles) -> bool:
-        """Check if user belongs to any of the specified roles or is superuser."""
+        """
+        Check if user belongs to any of the specified roles or is superuser.
+        Normalizes operational aliases ('SALES', 'CASHIER') to canonical 'STANDARD'.
+        """
         if not self.is_authenticated:
             return False
         if self.is_superuser:
             return True
-        return self.role in allowed_roles
+
+        canonical_map = {
+            'SALES': self.Role.STANDARD,
+            'CASHIER': self.Role.STANDARD,
+        }
+        normalized_allowed = {
+            canonical_map.get(str(r), r) if not hasattr(r, 'value') else canonical_map.get(r.value, r)
+            for r in allowed_roles
+        }
+        return self.role in normalized_allowed
 
     def can_access_manager_area(self) -> bool:
         """Managers and Admins can access manager-level areas."""

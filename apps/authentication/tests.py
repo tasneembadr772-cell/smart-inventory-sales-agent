@@ -297,3 +297,26 @@ class RoleBasedAccessControlTestCase(TestCase):
 
         response_admin = self.client.get(self.admin_url)
         self.assertEqual(response_admin.status_code, 200)
+
+    # --- Role Aliases & Consistency Tests ---
+    def test_role_aliases_and_convenience_properties(self):
+        """Verifies that SALES and CASHIER aliases map correctly to STANDARD role."""
+        self.assertTrue(self.standard_user.has_role('SALES'))
+        self.assertTrue(self.standard_user.has_role('CASHIER'))
+        self.assertTrue(self.standard_user.is_sales_role)
+        self.assertTrue(self.standard_user.is_cashier_role)
+
+        self.assertFalse(self.manager_user.has_role('SALES'))
+        self.assertFalse(self.manager_user.has_role('CASHIER'))
+        self.assertFalse(self.manager_user.is_sales_role)
+        self.assertFalse(self.manager_user.is_cashier_role)
+
+        # Superuser has all roles
+        superuser = User.objects.create_superuser(
+            username='super_alias',
+            email='super_alias@example.com',
+            password='Password123!',
+        )
+        self.assertTrue(superuser.has_role('SALES'))
+        self.assertTrue(superuser.has_role('CASHIER'))
+
