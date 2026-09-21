@@ -36,7 +36,30 @@ READ_ONLY_TOOLS: set[str] = {
     "get_inventory_summary",
 }
 
-SENSITIVE_PARAM_KEYS = {"password", "secret", "token", "api_key", "csrfmiddlewaretoken"}
+SENSITIVE_PARAM_KEYS = {
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "csrfmiddlewaretoken",
+    "csrf_token",
+    "csrftoken",
+    "cookie",
+    "session",
+    "sessionid",
+    "session_key",
+    "auth",
+    "authorization",
+    "bearer",
+    "private_key",
+    "credential",
+    "database_url",
+    "db_password",
+    "hash",
+}
 
 
 def sanitize_tool_parameters(raw_params: Any) -> Dict[str, Any]:
@@ -47,6 +70,7 @@ def sanitize_tool_parameters(raw_params: Any) -> Dict[str, Any]:
     - Always returns a JSON-serializable Python dictionary.
     - Recursively masks any sensitive credential keys in top-level and nested dictionaries.
     - Converts Decimals and custom types to string/number primitives.
+    - Scans string values for sensitive credential signatures.
     """
     if not isinstance(raw_params, dict):
         return {"_raw": str(raw_params)}
@@ -70,8 +94,22 @@ def sanitize_tool_parameters(raw_params: Any) -> Dict[str, Any]:
 
 
 def _sanitize_value(value: Any) -> Any:
-    """Recursively converts values to JSON-safe primitives."""
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    """Recursively converts values to JSON-safe primitives and masks sensitive string patterns."""
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, str):
+        val_lower = value.lower()
+        # Detect token signatures, API keys, password hashes, and session indicators
+        if (
+            value.startswith("AIzaSy")
+            or value.startswith("sk-")
+            or value.startswith("Bearer ")
+            or "pbkdf2_sha256$" in value
+            or "argon2" in val_lower
+            or "sessionid=" in val_lower
+            or any(k in val_lower for k in ("db_password", "database_url", "secret_key"))
+        ):
+            return "********"
         return value
     if isinstance(value, Decimal):
         return str(value)

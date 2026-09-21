@@ -112,15 +112,23 @@ def execute_tool(tool_name: str, user, params: dict | None = None) -> dict:
     if tool_name not in _TOOL_REGISTRY:
         available = ", ".join(sorted(_TOOL_REGISTRY.keys()))
         logger.warning("execute_tool: unknown tool requested: %r", tool_name)
+        detail_msg = (
+            f"Tool '{tool_name}' is not registered. "
+            f"Available tools: {available}."
+        )
+        record_tool_audit_log(
+            user=user,
+            tool_name=tool_name[:100],
+            parameters=params or {},
+            status="FAILED",
+            response_summary=detail_msg[:4000],
+        )
         return {
             "success": False,
             "data": None,
             "error": {
                 "code": "UNKNOWN_TOOL",
-                "detail": (
-                    f"Tool '{tool_name}' is not registered. "
-                    f"Available tools: {available}."
-                ),
+                "detail": detail_msg,
             },
         }
 
@@ -161,22 +169,22 @@ def execute_tool(tool_name: str, user, params: dict | None = None) -> dict:
         tool_result = tool_fn(user=user, params=params or {})
     except Exception as exc:
         logger.exception("execute_tool: unhandled exception in tool '%s': %s", tool_name, exc)
-        error_msg = f"Unhandled error executing tool '{tool_name}': {exc}"
+        safe_error = f"An unexpected error occurred while executing tool '{tool_name}'."
         record_tool_audit_log(
             user=user,
             tool_name=tool_name,
             parameters=params or {},
             status="FAILED",
-            response_summary=error_msg,
+            response_summary=f"Internal Exception: {str(exc)[:500]}",
         )
         return {
             "success": False,
             "data": None,
             "error": {
                 "code": "EXECUTION_ERROR",
-                "detail": error_msg,
+                "detail": safe_error,
             },
-            "message": error_msg,
+            "message": safe_error,
         }
 
     # 2. Persist Audit Log for tool outcome

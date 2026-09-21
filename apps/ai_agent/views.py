@@ -164,6 +164,7 @@ def agent_chat_api(request: HttpRequest) -> JsonResponse:
         "steps": result.steps,
         "tools_executed": result.tools_executed,
         "pending_action": result.pending_action,
+        "data": result.data,
         "context": {
             "username": request.user.username,
             "role": request.user.get_role_display(),
