@@ -349,6 +349,12 @@
     color: #991b1b;
 }
 
+.nexus-chat-badge-status.denied {
+    background: #fee2e2;
+    color: #b91c1c;
+    border: 1px solid #fca5a5;
+}
+
 .nexus-chat-badge-status.pending {
     background: #fef9c3;
     color: #854d0e;
@@ -612,3 +618,286 @@
         padding: 10px 16px;
     }
 }
+
+/* ==============================================================================
+   Draft Purchase Order Visual Card & Toast Notifications
+   ============================================================================== */
+
+/* --- Draft Purchase Order Visual Card --- */
+.nexus-chat-po-card {
+    background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid #cbd5e1;
+    border-left: 4px solid #0284c7;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 12px 0 6px 0;
+    box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 4px -1px rgba(15, 23, 42, 0.04);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    animation: nexusFadeInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes nexusFadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.nexus-po-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 8px;
+}
+
+.nexus-po-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.nexus-po-icon {
+    font-size: 1.15rem;
+}
+
+.nexus-po-badge-num {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: #0f172a;
+}
+
+.nexus-po-badge-status {
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    margin-left: 6px;
+    letter-spacing: 0.04em;
+}
+
+.nexus-po-total-tag {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 800;
+    font-size: 0.92rem;
+    color: #059669;
+}
+
+.nexus-po-supplier-row {
+    font-size: 0.82rem;
+    color: #475569;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.nexus-po-supplier-label {
+    font-weight: 500;
+    color: #64748b;
+}
+
+.nexus-po-supplier-value {
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.nexus-po-items-table-wrapper {
+    background: #f1f5f9;
+    border-radius: 8px;
+    padding: 6px 10px;
+    overflow-x: auto;
+    max-height: 160px;
+}
+
+.nexus-po-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.75rem;
+}
+
+.nexus-po-items-table th {
+    text-align: left;
+    color: #64748b;
+    font-weight: 600;
+    padding: 4px 6px;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.nexus-po-items-table td {
+    padding: 6px 6px;
+    color: #334155;
+    border-bottom: 1px solid #f8fafc;
+    vertical-align: middle;
+}
+
+.nexus-po-item-name {
+    font-weight: 600;
+    color: #1e293b;
+    line-height: 1.2;
+}
+
+.nexus-po-item-sku {
+    font-family: monospace;
+    font-size: 0.68rem;
+    color: #64748b;
+}
+
+.nexus-po-card-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 8px;
+}
+
+.nexus-po-total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+    color: #64748b;
+}
+
+.nexus-po-total-highlight {
+    font-size: 0.95rem;
+    color: #047857;
+    font-weight: 800;
+}
+
+.nexus-btn-po-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+    color: #ffffff !important;
+    text-decoration: none !important;
+    padding: 7px 14px;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    box-shadow: 0 2px 6px rgba(2, 132, 199, 0.35);
+    transition: all 0.2s ease;
+}
+
+.nexus-btn-po-link:hover {
+    background: linear-gradient(135deg, #0369a1 0%, #075985 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(2, 132, 199, 0.45);
+}
+
+.nexus-po-arrow {
+    transition: transform 0.2s ease;
+}
+
+.nexus-btn-po-link:hover .nexus-po-arrow {
+    transform: translateX(3px);
+}
+
+/* --- Floating Toast Notification Container --- */
+.nexus-toast-container {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 10050;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+    max-width: 420px;
+}
+
+.nexus-toast {
+    pointer-events: auto;
+    background: #1e293b;
+    color: #f8fafc;
+    border-radius: 10px;
+    padding: 12px 16px;
+    box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.25), 0 4px 6px -2px rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    animation: nexusToastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    border-left: 4px solid #3b82f6;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.nexus-toast.nexus-toast-error {
+    border-left-color: #ef4444;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-left: 4px solid #ef4444;
+}
+
+.nexus-toast.nexus-toast-warning {
+    border-left-color: #f59e0b;
+}
+
+.nexus-toast.nexus-toast-success {
+    border-left-color: #10b981;
+}
+
+.nexus-toast-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.nexus-toast-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+.nexus-toast-msg {
+    color: #e2e8f0;
+}
+
+.nexus-toast-close {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 1.1rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: color 0.15s ease;
+}
+
+.nexus-toast-close:hover {
+    color: #ffffff;
+}
+
+.nexus-toast.nexus-toast-hiding {
+    opacity: 0;
+    transform: translateX(40px);
+}
+
+@keyframes nexusToastSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(40px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+

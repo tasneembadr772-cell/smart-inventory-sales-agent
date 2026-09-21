@@ -24,9 +24,11 @@ from google.generativeai import types
 from .prompts import SYSTEM_INSTRUCTION
 from .tool_registry import execute_tool
 from .tools import (
+    can_user_execute_tool,
     get_gemini_function_declarations,
-    is_tool_sensitive,
     is_tool_registered,
+    is_tool_sensitive,
+    record_tool_audit_log,
     SENSITIVE_TOOLS,
 )
 from .utils import make_json_serializable, proto_to_python
@@ -277,7 +279,48 @@ class AgentService:
                     )
                     continue
 
-                # Guard 2: Require confirmation for sensitive/state-modifying operations
+                # Guard 2: RBAC Governance Gate (Standard users restricted to read-only queries)
+                allowed, denial_reason = can_user_execute_tool(self.user, tool_name)
+                if not allowed:
+                    logger.warning(
+                        "AgentService RBAC denied '%s' for user '%s'",
+                        tool_name,
+                        getattr(self.user, "username", "unknown"),
+                    )
+                    record_tool_audit_log(
+                        user=self.user,
+                        tool_name=tool_name,
+                        parameters=raw_args,
+                        status="DENIED",
+                        response_summary=denial_reason,
+                    )
+                    err_payload = {
+                        "success": False,
+                        "error": {
+                            "code": "PERMISSION_DENIED",
+                            "detail": denial_reason,
+                        },
+                        "message": denial_reason,
+                    }
+                    steps.append({
+                        "iteration": iteration,
+                        "thought": thought,
+                        "tool": tool_name,
+                        "args": raw_args,
+                        "result": err_payload,
+                        "status": "FAILURE",
+                    })
+                    tool_response_parts.append(
+                        types.protos.Part(
+                            function_response=types.protos.FunctionResponse(
+                                name=tool_name,
+                                response={"result": err_payload},
+                            )
+                        )
+                    )
+                    continue
+
+                # Guard 3: Require confirmation for sensitive/state-modifying operations
                 is_authorized = auto_confirm or (tool_name in confirmed_actions_set)
                 if is_tool_sensitive(tool_name) and not is_authorized:
                     pending_action = {
@@ -312,7 +355,7 @@ class AgentService:
                         pending_action=pending_action,
                     )
 
-                # Guard 3: Execute tool via security-hardened backend registry
+                # Guard 4: Execute tool via security-hardened backend registry
                 try:
                     tool_result = execute_tool(tool_name, user=self.user, params=raw_args)
                 except Exception as exec_err:
