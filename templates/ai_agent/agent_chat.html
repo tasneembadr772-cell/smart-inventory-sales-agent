@@ -131,6 +131,69 @@
                             <pre style="background: #0f172a; color: #f8fafc; padding: 0.75rem; border-radius: 6px; margin-top: 0.5rem; overflow-x: auto;">Arguments: {{ step.args }}
 Output: {{ step.result }}</pre>
                         </details>
+
+                        {% if step.status == 'DENIED' %}
+                        <div style="margin-top: 0.5rem; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; color: #991b1b; display: flex; align-items: center; gap: 0.5rem;">
+                            <span>🚫</span>
+                            <span><strong>Access Denied:</strong> {{ step.result.error.detail|default:"Only Managers and Admins can create purchase orders." }}</span>
+                        </div>
+                        {% endif %}
+
+                        {% if step.tool == 'create_draft_purchase_order' and step.status == 'SUCCESS' and step.result.data %}
+                        <div class="nexus-chat-po-card" style="margin-top: 0.75rem;">
+                            <div class="nexus-po-card-header">
+                                <div class="nexus-po-card-title">
+                                    <span class="nexus-po-icon">📋</span>
+                                    <div>
+                                        <span class="nexus-po-badge-num">{{ step.result.data.order_number }}</span>
+                                        <span class="nexus-po-badge-status">DRAFT</span>
+                                    </div>
+                                </div>
+                                <div class="nexus-po-total-tag">${{ step.result.data.total_amount }}</div>
+                            </div>
+                            <div class="nexus-po-supplier-row">
+                                <span class="nexus-po-supplier-label">🏢 Supplier:</span>
+                                <span class="nexus-po-supplier-value">{{ step.result.data.supplier_name }}</span>
+                            </div>
+                            {% if step.result.data.items %}
+                            <div class="nexus-po-items-table-wrapper">
+                                <table class="nexus-po-items-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Product SKU</th>
+                                            <th style="text-align: right;">Qty</th>
+                                            <th style="text-align: right;">Cost</th>
+                                            <th style="text-align: right;">Subtotal</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in step.result.data.items %}
+                                        <tr>
+                                            <td>
+                                                <div class="nexus-po-item-name">{{ item.product_name }}</div>
+                                                <div class="nexus-po-item-sku">{{ item.sku }}</div>
+                                            </td>
+                                            <td style="text-align: right; font-weight: 600;">{{ item.quantity }}</td>
+                                            <td style="text-align: right;">${{ item.unit_cost }}</td>
+                                            <td style="text-align: right; font-weight: 600;">${{ item.subtotal }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% endif %}
+                            <div class="nexus-po-card-footer">
+                                <div class="nexus-po-total-row">
+                                    <span>Estimated Total Cost:</span>
+                                    <strong class="nexus-po-total-highlight">${{ step.result.data.total_amount }}</strong>
+                                </div>
+                                <a href="{% url 'domain_app:po_detail' step.result.data.purchase_order_id %}" class="nexus-btn-po-link" target="_blank" rel="noopener">
+                                    <span>📄 View Purchase Order</span>
+                                    <span class="nexus-po-arrow">&rarr;</span>
+                                </a>
+                            </div>
+                        </div>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>

@@ -41,9 +41,18 @@ urlpatterns = [
     path('sales/create/', views.sale_create, name='sale_create'),
     path('sales/<int:pk>/', views.sale_detail, name='sale_detail'),
 
-    # Purchase Order Endpoints
+    # Purchase Order Endpoints (Canonical names and po_* aliases for backward compatibility)
+    path('purchase-orders/', views.purchase_order_list, name='purchase_order_list'),
     path('purchase-orders/', views.purchase_order_list, name='po_list'),
+    path('purchase-orders/create/', views.purchase_order_create, name='purchase_order_create'),
     path('purchase-orders/create/', views.purchase_order_create, name='po_create'),
+    path('purchase-orders/<int:pk>/', views.purchase_order_detail, name='purchase_order_detail'),
     path('purchase-orders/<int:pk>/', views.purchase_order_detail, name='po_detail'),
+    path('purchase-orders/<int:pk>/update-status/', views.purchase_order_update_status, name='purchase_order_update_status'),
     path('purchase-orders/<int:pk>/update-status/', views.purchase_order_update_status, name='po_update_status'),
+    path('purchase-orders/<int:pk>/approve/', views.purchase_order_approve, name='purchase_order_approve'),
+    path('purchase-orders/<int:pk>/receive/', views.purchase_order_receive, name='purchase_order_receive'),
+    path('purchase-orders/<int:pk>/cancel/', views.purchase_order_cancel, name='purchase_order_cancel'),
+    path('purchase-orders/<int:pk>/delete/', views.purchase_order_delete, name='purchase_order_delete'),
 ]
+

@@ -248,8 +248,13 @@ class InventoryChatbot {
             } else {
                 // Handled Error State from Server
                 const errorMsg = data.error || data.reply || 'An unexpected error occurred while processing your request.';
+                if (window.agentChatRenderer && (data.status === 'UNAUTHORIZED' || data.status === 'DENIED' || String(errorMsg).toLowerCase().includes('permission'))) {
+                    window.agentChatRenderer.showToast(errorMsg, 'error', 6000);
+                }
                 this.showError(errorMsg);
-                this.appendMessage('assistant', `⚠️ **Error**: ${errorMsg}`);
+                this.appendMessage('assistant', `⚠️ **Error**: ${errorMsg}`, {
+                    steps: data.steps || [],
+                });
             }
         } catch (networkErr) {
             this.setLoading(false);
@@ -332,7 +337,7 @@ class InventoryChatbot {
             const card = document.createElement('div');
             card.className = 'nexus-chat-action-card';
 
-            const statusClass = step.status === 'SUCCESS' ? 'success' : (step.status === 'PENDING_CONFIRMATION' ? 'pending' : 'failure');
+            const statusClass = step.status === 'SUCCESS' ? 'success' : (step.status === 'PENDING_CONFIRMATION' ? 'pending' : (step.status === 'DENIED' ? 'denied' : 'failure'));
 
             card.innerHTML = `
                 <div class="nexus-chat-action-header">
@@ -352,6 +357,24 @@ class InventoryChatbot {
                 </details>
             `;
             container.appendChild(card);
+
+            // Trigger non-blocking error toast on permission denied
+            if (step.status === 'DENIED' || (step.result && step.result.error && step.result.error.code === 'PERMISSION_DENIED')) {
+                const detail = (step.result && step.result.error && step.result.error.detail) ||
+                               (step.result && step.result.message) ||
+                               'Permission denied: Only Managers and Admins can create draft purchase orders.';
+                if (window.agentChatRenderer) {
+                    window.agentChatRenderer.showToast(detail, 'error', 6000);
+                }
+            }
+
+            // Render rich visual card for Draft Purchase Order creation
+            if (step.tool === 'create_draft_purchase_order' && step.status === 'SUCCESS' && step.result && step.result.data) {
+                if (window.agentChatRenderer) {
+                    const poCard = window.agentChatRenderer.renderPurchaseOrderCard(step.result.data);
+                    container.appendChild(poCard);
+                }
+            }
         });
 
         return container;

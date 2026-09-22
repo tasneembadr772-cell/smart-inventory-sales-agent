@@ -75,16 +75,17 @@ _TOOL_REGISTRY: dict[str, dict] = {
 
 def execute_tool(tool_name: str, user, params: dict | None = None) -> dict:
     """
-    Execute a named tool from the registry.
+    Execute a named tool from the registry with governance and audit logging.
 
     This is the single entry point for the AI orchestration loop.
     The LLM passes a tool_name and a params dict; this function looks up
-    the tool, validates the name, and delegates to the tool function.
+    the tool, validates the name, enforces RBAC, and delegates to the tool function.
 
     Security properties guaranteed here (in addition to per-tool checks):
       - Only explicitly registered tool names are accepted.
       - Unknown tool names return a controlled error — no arbitrary execution.
-      - user is passed through untouched to each tool's own auth/RBAC guard.
+      - Enforces strict RBAC: Standard Users are limited to read-only queries.
+      - Intercepts and records an AgentAuditLog entry for every execution.
 
     Args:
         tool_name: The exact name of the tool to execute (from _TOOL_REGISTRY).
@@ -94,6 +95,8 @@ def execute_tool(tool_name: str, user, params: dict | None = None) -> dict:
     Returns:
         A ToolResult dict: {"success": bool, "data": ..., "error": ..., "message": ...}
     """
+    from .tools import can_user_execute_tool, record_tool_audit_log
+
     if not isinstance(tool_name, str) or not tool_name.strip():
         return {
             "success": False,
@@ -109,16 +112,50 @@ def execute_tool(tool_name: str, user, params: dict | None = None) -> dict:
     if tool_name not in _TOOL_REGISTRY:
         available = ", ".join(sorted(_TOOL_REGISTRY.keys()))
         logger.warning("execute_tool: unknown tool requested: %r", tool_name)
+        detail_msg = (
+            f"Tool '{tool_name}' is not registered. "
+            f"Available tools: {available}."
+        )
+        record_tool_audit_log(
+            user=user,
+            tool_name=tool_name[:100],
+            parameters=params or {},
+            status="FAILED",
+            response_summary=detail_msg[:4000],
+        )
         return {
             "success": False,
             "data": None,
             "error": {
                 "code": "UNKNOWN_TOOL",
-                "detail": (
-                    f"Tool '{tool_name}' is not registered. "
-                    f"Available tools: {available}."
-                ),
+                "detail": detail_msg,
             },
+        }
+
+    # 1. RBAC Governance Check
+    allowed, denial_reason = can_user_execute_tool(user, tool_name)
+    if not allowed:
+        logger.warning(
+            "execute_tool: RBAC denied '%s' for user '%s': %s",
+            tool_name,
+            getattr(user, "username", "<anonymous>"),
+            denial_reason,
+        )
+        record_tool_audit_log(
+            user=user,
+            tool_name=tool_name,
+            parameters=params or {},
+            status="DENIED",
+            response_summary=denial_reason,
+        )
+        return {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "PERMISSION_DENIED",
+                "detail": denial_reason,
+            },
+            "message": denial_reason,
         }
 
     tool_fn = _TOOL_REGISTRY[tool_name]["callable"]
@@ -128,7 +165,52 @@ def execute_tool(tool_name: str, user, params: dict | None = None) -> dict:
         getattr(user, "username", "<anonymous>"),
     )
 
-    return tool_fn(user=user, params=params or {})
+    try:
+        tool_result = tool_fn(user=user, params=params or {})
+    except Exception as exc:
+        logger.exception("execute_tool: unhandled exception in tool '%s': %s", tool_name, exc)
+        safe_error = f"An unexpected error occurred while executing tool '{tool_name}'."
+        record_tool_audit_log(
+            user=user,
+            tool_name=tool_name,
+            parameters=params or {},
+            status="FAILED",
+            response_summary=f"Internal Exception: {str(exc)[:500]}",
+        )
+        return {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "EXECUTION_ERROR",
+                "detail": safe_error,
+            },
+            "message": safe_error,
+        }
+
+    # 2. Persist Audit Log for tool outcome
+    if tool_result.get("success"):
+        summary = tool_result.get("message") or f"Tool '{tool_name}' executed successfully."
+        record_tool_audit_log(
+            user=user,
+            tool_name=tool_name,
+            parameters=params or {},
+            status="SUCCESS",
+            response_summary=summary,
+        )
+    else:
+        err_obj = tool_result.get("error") or {}
+        err_code = err_obj.get("code") if isinstance(err_obj, dict) else ""
+        err_detail = (err_obj.get("detail") if isinstance(err_obj, dict) else str(err_obj)) or tool_result.get("message", "")
+        status = "DENIED" if err_code in ("PERMISSION_DENIED", "UNAUTHENTICATED") else "FAILED"
+        record_tool_audit_log(
+            user=user,
+            tool_name=tool_name,
+            parameters=params or {},
+            status=status,
+            response_summary=str(err_detail),
+        )
+
+    return tool_result
 
 
 def list_tools() -> list[dict]:

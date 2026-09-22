@@ -685,6 +685,9 @@ def create_purchase_order(
     if not items_data or len(items_data) == 0:
         raise PurchaseOrderError({'items': 'At least one line item is required to create a purchase order.'})
 
+    if not supplier.is_active:
+        raise PurchaseOrderError({'supplier': f"Cannot create purchase order for inactive supplier '{supplier.name}'."})
+
     order_number = None
     for _ in range(5):
         candidate_id = generate_po_identifier()
@@ -741,6 +744,14 @@ def create_purchase_order(
 
     for pid, qty in product_quantities.items():
         product = products_map[pid]
+        if product.supplier_id and product.supplier_id != supplier.pk:
+            supplier_name = product.supplier.name if product.supplier else str(product.supplier_id)
+            raise PurchaseOrderError({
+                'items': (
+                    f"Product '{product.name}' (SKU: {product.sku}) belongs to a different supplier ('{supplier_name}'), "
+                    f"not requested supplier '{supplier.name}'."
+                )
+            })
         unit_cost = unit_costs[pid]
         line_subtotal = Decimal(str(qty)) * unit_cost
         total_amount += line_subtotal
@@ -786,7 +797,10 @@ def update_purchase_order_status(
     Draft/Pending/Approved -> Cancelled
 
     When an order becomes Received, inventory is updated atomically.
+    Serializes status changes via select_for_update row lock on the PurchaseOrder.
     """
+    # Concurrency lock on PurchaseOrder row to serialize status transitions
+    po = PurchaseOrder.objects.select_for_update().get(pk=po.pk)
 
     if po.status == new_status:
         return po
@@ -817,6 +831,13 @@ def update_purchase_order_status(
             f"{po.get_status_display()} to "
             f"{po.__class__.Status(new_status).label}."
         )
+
+    # Invariant: Inactive suppliers cannot receive active status advancements
+    if new_status in (PurchaseOrder.Status.PENDING, PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.RECEIVED):
+        if not po.supplier.is_active:
+            raise PurchaseOrderError(
+                f"Cannot advance purchase order for inactive supplier '{po.supplier.name}'."
+            )
 
     if new_status == PurchaseOrder.Status.RECEIVED:
         po_items = po.items.all().select_related('product')

@@ -22,15 +22,17 @@ The AI loop MUST NOT:
 
 from __future__ import annotations
 
+import datetime
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from apps.domain_app import selectors, services
-from apps.domain_app.models import Product, Supplier
+from apps.domain_app.models import Product, PurchaseOrder, Supplier
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,12 @@ class CheckLowStockParams:
         Raises ValueError with a human-readable message on any invalid input.
         """
         errors = []
+
+        # Check for unexpected top-level arguments
+        allowed_keys = {"limit", "include_out_of_stock"}
+        unexpected_keys = set(raw.keys()) - allowed_keys
+        if unexpected_keys:
+            errors.append(f"Unexpected argument(s) not permitted: {', '.join(sorted(unexpected_keys))}")
 
         # --- limit ---
         limit_raw = raw.get("limit", 50)
@@ -190,8 +198,8 @@ def check_low_stock_products(user, params: dict) -> dict:
             include_out_of_stock=validated.include_out_of_stock,
         )
     except Exception as exc:
-        logger.exception("check_low_stock_products: unexpected error")
-        return _err(f"An unexpected error occurred: {exc}", code="INTERNAL_ERROR")
+        logger.exception("check_low_stock_products: unexpected error: %s", exc)
+        return _err("An unexpected internal error occurred while retrieving low-stock products.", code="INTERNAL_ERROR")
 
     # ── 4. Apply limit post-query (selector doesn't accept limit) ──────────
     sliced = report[: validated.limit]
@@ -238,6 +246,12 @@ class CreateDraftPOParams:
         """
         errors = []
 
+        # Check for unexpected top-level arguments
+        allowed_keys = {"supplier_id", "items", "notes"}
+        unexpected_keys = set(raw.keys()) - allowed_keys
+        if unexpected_keys:
+            errors.append(f"Unexpected argument(s) not permitted: {', '.join(sorted(unexpected_keys))}")
+
         # --- supplier_id ---
         supplier_id_raw = raw.get("supplier_id")
         if supplier_id_raw is None:
@@ -261,6 +275,16 @@ class CreateDraftPOParams:
             items = []
             for idx, item in enumerate(items_raw):
                 item_errors = []
+
+                if not isinstance(item, dict):
+                    item_errors.append("each line item must be a JSON object")
+                    errors.append(f"Item #{idx + 1}: " + "; ".join(item_errors))
+                    continue
+
+                allowed_item_keys = {"product_id", "quantity", "unit_cost"}
+                unexpected_item = set(item.keys()) - allowed_item_keys
+                if unexpected_item:
+                    item_errors.append(f"Unexpected item field(s): {', '.join(sorted(unexpected_item))}")
 
                 # product_id
                 pid_raw = item.get("product_id")
@@ -286,6 +310,8 @@ class CreateDraftPOParams:
                         qty = int(qty_raw)
                         if qty < 1:
                             item_errors.append(f"'quantity' must be >= 1, got: {qty}")
+                        elif qty > 1_000_000:
+                            item_errors.append(f"'quantity' exceeds maximum allowed limit (1,000,000), got: {qty}")
                     except (TypeError, ValueError):
                         item_errors.append(f"'quantity' must be an integer, got: {qty_raw!r}")
                         qty = 0
@@ -301,6 +327,10 @@ class CreateDraftPOParams:
                         if cost < Decimal("0.00"):
                             item_errors.append(
                                 f"'unit_cost' must be >= 0.00, got: {cost}"
+                            )
+                        elif cost > Decimal("999999999.99"):
+                            item_errors.append(
+                                f"'unit_cost' exceeds maximum allowed limit (999,999,999.99), got: {cost}"
                             )
                     except InvalidOperation:
                         item_errors.append(
@@ -410,9 +440,74 @@ def create_draft_purchase_order(user, params: dict) -> dict:
             product_errors.append(
                 f"Product '{p.name}' (ID: {p.pk}, SKU: {p.sku}) is inactive."
             )
+        elif existing_products[item.product_id].supplier_id and existing_products[item.product_id].supplier_id != supplier.pk:
+            p = existing_products[item.product_id]
+            product_errors.append(
+                f"Product '{p.name}' (ID: {p.pk}, SKU: {p.sku}) belongs to supplier "
+                f"ID {p.supplier_id}, not requested supplier '{supplier.name}' (ID: {supplier.pk})."
+            )
 
     if product_errors:
         return _err("; ".join(product_errors), code="INVALID_PRODUCT")
+
+    # ── 4.5. Duplicate Draft PO Protection (Idempotency) ───────────────────
+    cutoff = timezone.now() - datetime.timedelta(minutes=5)
+    recent_draft_pos = PurchaseOrder.objects.filter(
+        supplier=supplier,
+        created_by=user,
+        status=PurchaseOrder.Status.DRAFT,
+        created_at__gte=cutoff,
+    ).prefetch_related("items", "items__product")
+
+    target_items_sig = sorted([(item.product_id, item.quantity, item.unit_cost) for item in validated.items])
+
+    duplicate_po = None
+    for draft_po in recent_draft_pos:
+        existing_sig = sorted([
+            (poi.product_id, poi.quantity, poi.unit_cost)
+            for poi in draft_po.items.all()
+        ])
+        if existing_sig == target_items_sig:
+            duplicate_po = draft_po
+            break
+
+    if duplicate_po:
+        logger.info(
+            "create_draft_purchase_order: duplicate draft PO prevented for supplier %s (existing PO %s)",
+            supplier.pk,
+            duplicate_po.order_number,
+        )
+        items_out = [
+            {
+                "product_id": poi.product_id,
+                "product_name": poi.product.name,
+                "sku": poi.product.sku,
+                "quantity": poi.quantity,
+                "unit_cost": str(poi.unit_cost),
+                "subtotal": str(poi.subtotal),
+            }
+            for poi in duplicate_po.items.select_related("product").all()
+        ]
+        return _ok(
+            data={
+                "purchase_order_id": duplicate_po.pk,
+                "order_number": duplicate_po.order_number,
+                "supplier_id": supplier.pk,
+                "supplier_name": supplier.name,
+                "status": duplicate_po.status,
+                "status_label": duplicate_po.get_status_display(),
+                "total_amount": str(duplicate_po.total_amount),
+                "line_items_count": len(items_out),
+                "notes": duplicate_po.notes,
+                "created_by": user.username,
+                "items": items_out,
+                "duplicate_prevented": True,
+            },
+            message=(
+                f"Existing draft purchase order {duplicate_po.order_number} returned (duplicate prevented). "
+                f"A matching draft order was recently created for supplier '{supplier.name}' with total ${duplicate_po.total_amount}."
+            ),
+        )
 
     # ── 5. Delegate to service (atomic write) ───────────────────────────────
     items_data = [
@@ -437,8 +532,8 @@ def create_draft_purchase_order(user, params: dict) -> dict:
         logger.warning("create_draft_purchase_order: service error: %s", detail)
         return _err(detail, code="VALIDATION_ERROR")
     except Exception as exc:
-        logger.exception("create_draft_purchase_order: unexpected error")
-        return _err(f"An unexpected error occurred: {exc}", code="INTERNAL_ERROR")
+        logger.exception("create_draft_purchase_order: unexpected error: %s", exc)
+        return _err("An unexpected internal error occurred while creating the draft purchase order.", code="INTERNAL_ERROR")
 
     # ── 6. Serialize response (no model instances in result) ─────────────────
     items_out = [
@@ -514,8 +609,8 @@ def get_inventory_summary(user, params: dict) -> dict:
     try:
         kpis = selectors.get_inventory_kpis(user=user)
     except Exception as exc:
-        logger.exception("get_inventory_summary: unexpected error")
-        return _err(f"An unexpected error occurred: {exc}", code="INTERNAL_ERROR")
+        logger.exception("get_inventory_summary: unexpected error: %s", exc)
+        return _err("An unexpected internal error occurred while retrieving inventory summary.", code="INTERNAL_ERROR")
 
     return _ok(
         data={

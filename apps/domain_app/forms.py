@@ -564,6 +564,12 @@ class PurchaseOrderForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields['supplier'].queryset = Supplier.objects.filter(is_active=True).order_by('name')
 
+    def clean_supplier(self):
+        supplier = self.cleaned_data.get('supplier')
+        if supplier and not supplier.is_active:
+            raise forms.ValidationError("Inactive suppliers cannot be assigned to active purchase orders.")
+        return supplier
+
 
 class PurchaseOrderItemForm(forms.Form):
     """

@@ -13,6 +13,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
+from django.db import models
 from django.http import JsonResponse
 from django.shortcuts import render, redirect
 from django.views.decorators.http import require_http_methods
@@ -204,9 +205,17 @@ def product_delete(request, pk: int):
     if request.method == 'POST':
         product_name = product.name
         product_sku = product.sku
-        services.delete_product(product)
-        messages.success(request, f"Product '{product_name}' (SKU: {product_sku}) was permanently deleted.")
-        return redirect('domain_app:product_list')
+        try:
+            services.delete_product(product)
+            messages.success(request, f"Product '{product_name}' (SKU: {product_sku}) was permanently deleted.")
+            return redirect('domain_app:product_list')
+        except models.ProtectedError:
+            messages.error(
+                request,
+                f"Cannot delete product '{product_name}' (SKU: {product_sku}) because it is referenced "
+                f"in sales, purchase orders, or inventory transaction history."
+            )
+            return redirect('domain_app:product_detail', pk=product.pk)
 
     context = {
         'product': product,
@@ -475,9 +484,16 @@ def supplier_delete(request, pk: int):
 
     if request.method == 'POST':
         supplier_name = supplier.name
-        services.delete_supplier(supplier)
-        messages.success(request, f"Supplier '{supplier_name}' was deleted successfully.")
-        return redirect('domain_app:supplier_list')
+        try:
+            services.delete_supplier(supplier)
+            messages.success(request, f"Supplier '{supplier_name}' was deleted successfully.")
+            return redirect('domain_app:supplier_list')
+        except models.ProtectedError:
+            messages.error(
+                request,
+                f"Cannot delete supplier '{supplier_name}' because it has associated purchase orders."
+            )
+            return redirect('domain_app:supplier_detail', pk=supplier.pk)
 
     context = {
         'supplier': supplier,
@@ -1064,6 +1080,94 @@ def purchase_order_update_status(request, pk):
         messages.error(request, str(err))
 
     return redirect('domain_app:po_detail', pk=pk)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_approve(request, pk: int):
+    """
+    Workflow action: Approves a pending Purchase Order.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    try:
+        updated_po = services.update_purchase_order_status(
+            po=po,
+            new_status=PurchaseOrder.Status.APPROVED,
+            user=request.user,
+        )
+        messages.success(request, f"Purchase Order {updated_po.order_number} has been approved.")
+    except PurchaseOrderError as err:
+        messages.error(request, str(err))
+    return redirect('domain_app:po_detail', pk=pk)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_receive(request, pk: int):
+    """
+    Workflow action: Receives an approved Purchase Order and updates inventory stock.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    try:
+        updated_po = services.update_purchase_order_status(
+            po=po,
+            new_status=PurchaseOrder.Status.RECEIVED,
+            user=request.user,
+        )
+        messages.success(
+            request,
+            f"Purchase Order {updated_po.order_number} received successfully! Inventory stock has been incremented."
+        )
+    except PurchaseOrderError as err:
+        messages.error(request, str(err))
+    return redirect('domain_app:po_detail', pk=pk)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_cancel(request, pk: int):
+    """
+    Workflow action: Cancels a Purchase Order with reason recording.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    reason = request.POST.get('reason', '').strip()
+    if reason:
+        existing_notes = po.notes or ""
+        po.notes = f"{existing_notes}\n[Cancellation Reason]: {reason}".strip()
+        po.save(update_fields=['notes', 'updated_at'])
+
+    try:
+        updated_po = services.update_purchase_order_status(
+            po=po,
+            new_status=PurchaseOrder.Status.CANCELLED,
+            user=request.user,
+        )
+        messages.warning(request, f"Purchase Order {updated_po.order_number} has been cancelled.")
+    except PurchaseOrderError as err:
+        messages.error(request, str(err))
+    return redirect('domain_app:po_detail', pk=pk)
+
+
+@manager_required
+@require_http_methods(["POST"])
+def purchase_order_delete(request, pk: int):
+    """
+    Deletes a Draft or Cancelled Purchase Order.
+    Restricted to Managers and Admins (RBAC).
+    """
+    po = selectors.get_purchase_order_by_id(pk)
+    if po.status not in (PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.CANCELLED):
+        messages.error(request, "Only Draft or Cancelled purchase orders can be deleted.")
+        return redirect('domain_app:po_detail', pk=pk)
+
+    order_num = po.order_number
+    po.delete()
+    messages.success(request, f"Purchase Order {order_num} was permanently deleted.")
+    return redirect('domain_app:purchase_order_list')
+
 
 
 

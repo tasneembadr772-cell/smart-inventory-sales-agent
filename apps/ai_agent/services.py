@@ -13,8 +13,10 @@ Implements the multi-step Agentic Tool Calling workflow:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -24,9 +26,12 @@ from google.generativeai import types
 from .prompts import SYSTEM_INSTRUCTION
 from .tool_registry import execute_tool
 from .tools import (
+    can_user_execute_tool,
     get_gemini_function_declarations,
-    is_tool_sensitive,
     is_tool_registered,
+    is_tool_sensitive,
+    record_tool_audit_log,
+    MUTATION_TOOLS,
     SENSITIVE_TOOLS,
 )
 from .utils import make_json_serializable, proto_to_python
@@ -125,6 +130,11 @@ class AgentService:
                 error="UNAUTHORIZED",
             )
 
+        # Standard users cannot auto-confirm state-changing actions
+        user_is_privileged = getattr(self.user, "has_role", lambda *r: False)("ADMIN", "MANAGER")
+        if not user_is_privileged:
+            auto_confirm = False
+
         confirmed_actions_set = set(confirmed_actions or [])
 
         # ── 2. Initialize Model and Chat Session ────────────────────────────
@@ -153,6 +163,13 @@ class AgentService:
         iteration = 0
         steps: List[Dict[str, Any]] = []
         tools_executed: List[str] = []
+        seen_tool_calls: set[str] = set()
+        structured_data: Dict[str, Any] = {
+            "affected_records": [],
+            "created_orders": [],
+            "summary": {},
+            "errors": [],
+        }
 
         # Construct context-aware initial prompt if conversation history or context is supplied
         context_blocks = []
@@ -202,14 +219,18 @@ class AgentService:
                 response = chat.send_message(current_input)
             except Exception as llm_err:
                 logger.exception("LLM API call failed during iteration %d", iteration)
+                err_str = str(llm_err)
+                safe_err = re.sub(r'key=[A-Za-z0-9_-]+', 'key=********', err_str)
+                safe_err = re.sub(r'AIza[0-9A-Za-z-_]{35}', '********', safe_err)
                 return AgentResult(
                     success=False,
                     status="ERROR",
                     goal=goal,
-                    final_answer=f"An error occurred while communicating with the AI model: {str(llm_err)}",
+                    final_answer=f"An error occurred while communicating with the AI model: {safe_err}",
                     steps=steps,
                     tools_executed=tools_executed,
-                    error=str(llm_err),
+                    data=structured_data,
+                    error=safe_err,
                 )
 
             # Inspect response candidates
@@ -233,6 +254,17 @@ class AgentService:
             # If the LLM didn't request any tool calls, it has reached its final answer!
             if not function_calls:
                 final_answer = thought or "Goal completed successfully."
+                # Anti-hallucination: If any mutation tool failed, prevent LLM text from claiming false success
+                mutation_failed = any(
+                    step.get("tool") in MUTATION_TOOLS and step.get("status") == "FAILURE"
+                    for step in steps
+                )
+                if mutation_failed and any(w in thought.lower() for w in ("successfully created", "order has been created", "po created", "draft order created")):
+                    final_answer = (
+                        "The purchase order could NOT be created due to permission or validation errors. "
+                        "Please inspect the execution trace for details."
+                    )
+
                 logger.info("Agent reached final answer at iteration %d", iteration)
                 return AgentResult(
                     success=True,
@@ -241,6 +273,7 @@ class AgentService:
                     final_answer=final_answer,
                     steps=steps,
                     tools_executed=tools_executed,
+                    data=structured_data,
                 )
 
             # ── 4. Process Function Calls ───────────────────────────────────
@@ -249,6 +282,11 @@ class AgentService:
             for fc in function_calls:
                 tool_name = fc.name
                 raw_args = proto_to_python(getattr(fc, "args", {})) or {}
+                if isinstance(raw_args, dict):
+                    # Never trust confirmation booleans injected by the LLM inside tool arguments
+                    raw_args.pop("confirmed", None)
+                    raw_args.pop("confirm", None)
+                    raw_args.pop("auto_confirm", None)
 
                 # Guard 1: Verify tool is in the approved registry whitelist
                 if not is_tool_registered(tool_name):
@@ -259,6 +297,14 @@ class AgentService:
                             "detail": f"Tool '{tool_name}' is not registered or allowed.",
                         },
                     }
+                    record_tool_audit_log(
+                        user=self.user,
+                        tool_name=str(tool_name)[:100],
+                        parameters=raw_args,
+                        status="FAILED",
+                        response_summary=f"Tool '{tool_name}' is not registered or allowed.",
+                    )
+                    structured_data["errors"].append(f"Tool '{tool_name}' is not registered or allowed.")
                     steps.append({
                         "iteration": iteration,
                         "thought": thought,
@@ -277,8 +323,81 @@ class AgentService:
                     )
                     continue
 
-                # Guard 2: Require confirmation for sensitive/state-modifying operations
-                is_authorized = auto_confirm or (tool_name in confirmed_actions_set)
+                # Guard 2: RBAC Governance Gate (Standard users restricted to read-only queries)
+                allowed, denial_reason = can_user_execute_tool(self.user, tool_name)
+                if not allowed:
+                    logger.warning(
+                        "AgentService RBAC denied '%s' for user '%s'",
+                        tool_name,
+                        getattr(self.user, "username", "unknown"),
+                    )
+                    record_tool_audit_log(
+                        user=self.user,
+                        tool_name=tool_name,
+                        parameters=raw_args,
+                        status="DENIED",
+                        response_summary=denial_reason,
+                    )
+                    structured_data["errors"].append(denial_reason)
+                    err_payload = {
+                        "success": False,
+                        "error": {
+                            "code": "PERMISSION_DENIED",
+                            "detail": denial_reason,
+                        },
+                        "message": denial_reason,
+                    }
+                    steps.append({
+                        "iteration": iteration,
+                        "thought": thought,
+                        "tool": tool_name,
+                        "args": raw_args,
+                        "result": err_payload,
+                        "status": "FAILURE",
+                    })
+                    tool_response_parts.append(
+                        types.protos.Part(
+                            function_response=types.protos.FunctionResponse(
+                                name=tool_name,
+                                response={"result": err_payload},
+                            )
+                        )
+                    )
+                    continue
+
+                # Guard 2.5: Loop Safety — Repeated Identical Tool Call Protection
+                call_signature = f"{tool_name}:{json.dumps(raw_args, sort_keys=True, default=str)}"
+                if call_signature in seen_tool_calls:
+                    logger.warning("AgentService: repeated identical tool call prevented: %s", tool_name)
+                    err_payload = {
+                        "success": False,
+                        "error": {
+                            "code": "REPEATED_TOOL_CALL",
+                            "detail": f"Repeated execution of tool '{tool_name}' with identical parameters was prevented.",
+                        },
+                        "message": f"Repeated call to '{tool_name}' with identical parameters was prevented.",
+                    }
+                    steps.append({
+                        "iteration": iteration,
+                        "thought": thought,
+                        "tool": tool_name,
+                        "args": raw_args,
+                        "result": err_payload,
+                        "status": "FAILURE",
+                    })
+                    tool_response_parts.append(
+                        types.protos.Part(
+                            function_response=types.protos.FunctionResponse(
+                                name=tool_name,
+                                response={"result": err_payload},
+                            )
+                        )
+                    )
+                    continue
+                seen_tool_calls.add(call_signature)
+
+                # Guard 3: Require confirmation for sensitive/state-modifying operations
+                is_authorized = (auto_confirm and user_is_privileged) or (tool_name in confirmed_actions_set)
                 if is_tool_sensitive(tool_name) and not is_authorized:
                     pending_action = {
                         "tool_name": tool_name,
@@ -310,9 +429,10 @@ class AgentService:
                         steps=steps,
                         tools_executed=tools_executed,
                         pending_action=pending_action,
+                        data=structured_data,
                     )
 
-                # Guard 3: Execute tool via security-hardened backend registry
+                # Guard 4: Execute tool via security-hardened backend registry
                 try:
                     tool_result = execute_tool(tool_name, user=self.user, params=raw_args)
                 except Exception as exec_err:
@@ -334,6 +454,26 @@ class AgentService:
                     "result": tool_result,
                     "status": "SUCCESS" if tool_result.get("success") else "FAILURE",
                 })
+
+                # Capture verified backend data for structured output
+                if tool_result.get("success"):
+                    if tool_name == "create_draft_purchase_order":
+                        po_data = tool_result.get("data") or {}
+                        po_id = po_data.get("purchase_order_id")
+                        po_num = po_data.get("order_number")
+                        if po_id and po_num:
+                            structured_data["affected_records"].append({
+                                "type": "PurchaseOrder",
+                                "id": po_id,
+                                "order_number": po_num,
+                            })
+                            structured_data["created_orders"].append(po_data)
+                    elif tool_name in ("check_low_stock_products", "get_inventory_summary"):
+                        structured_data["summary"][tool_name] = tool_result.get("data")
+                else:
+                    err_info = tool_result.get("error") or {}
+                    err_msg = err_info.get("detail") if isinstance(err_info, dict) else str(err_info)
+                    structured_data["errors"].append(str(err_msg or tool_result.get("message", "Tool execution failed.")))
 
                 # Prepare function response part to feed back to LLM
                 serializable = make_json_serializable(tool_result)
@@ -358,6 +498,7 @@ class AgentService:
             final_answer="The agent reached the maximum permitted tool execution iterations before completing the goal.",
             steps=steps,
             tools_executed=tools_executed,
+            data=structured_data,
             error="MAX_ITERATIONS_REACHED",
         )
 
