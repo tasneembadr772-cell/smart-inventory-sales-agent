@@ -78,7 +78,7 @@ class AgentService:
     reasoning-action loop.
     """
 
-    DEFAULT_MODEL = "gemini-1.5-flash"
+    DEFAULT_MODEL = "gemini-2.0-flash"
     DEFAULT_MAX_ITERATIONS = 6
 
     def __init__(
