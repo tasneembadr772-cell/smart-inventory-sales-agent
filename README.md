@@ -4,7 +4,7 @@
 [![Django 5.1](https://img.shields.io/badge/Django-5.1-092E20.svg?logo=django&logoColor=white)](https://www.djangoproject.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Tests Passing](https://img.shields.io/badge/Tests-272%20Passed-brightgreen.svg)](https://github.com/tasneembadr772-cell/smart-inventory-sales-agent)
-[![AI Agent](https://img.shields.io/badge/AI%20Engine-Gemini%201.5%20Flash-orange.svg)](https://deepmind.google/technologies/gemini/)
+[![AI Agent](https://img.shields.io/badge/AI%20Engine-Gemini%202.0%20Flash-orange.svg)](https://deepmind.google/technologies/gemini/)
 
 NexusERP is a production-hardened web application featuring an **Autonomous Agentic AI Workflow** with safe backend tool-calling, built with Python, Django (MVT), and PostgreSQL. It delivers real-time inventory calibration, transactional point-of-sale processing, replenishment purchase order lifecycles, and role-governed AI assistance.
 
@@ -36,7 +36,7 @@ For comprehensive academic evaluation, defense review, and system specifications
 - **Backend Framework:** Python 3.12+, Django 5.1+ (Model-View-Template Architecture)
 - **Database:** PostgreSQL 18 (Third Normal Form Normalized Schema with SQLite fallback for isolated unit tests)
 - **Frontend Layer:** Semantic HTML5, Custom Vanilla Modern CSS, Vanilla JavaScript (ES6+ Fetch API, CSRF-protected)
-- **AI & LLM Integration:** Google Gemini 1.5 Flash (`gemini-1.5-flash` via `google.generativeai` function-calling SDK)
+- **AI & LLM Integration:** Google Gemini 2.0 Flash (`gemini-2.0-flash` via `google.generativeai` function-calling SDK)
 - **Version Control:** Git & GitHub (Feature branch workflow, Conventional Commits)
 
 ---
@@ -125,7 +125,7 @@ Configure your environment variables (*variable names only — never commit secr
 | `DB_HOST` | `localhost` | PostgreSQL host address. |
 | `DB_PORT` | `5432` | PostgreSQL database port. |
 | `GEMINI_API_KEY`| *(your Gemini key)* | Google Gemini API key for the AI Assistant. |
-| `GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model variant. |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model variant. |
 
 ---
 
@@ -207,7 +207,7 @@ NexusERP incorporates a sandboxed autonomous AI assistant accessible via `/ai/`:
 
 ## 🌿 Git Workflow & Repository Audit
 
-- **Active Branch:** `docs/final-documentation`
+- **Active Branch:** `main`
 - **Main Remote:** `origin` (`https://github.com/tasneembadr772-cell/smart-inventory-sales-agent.git`)
 - **Commit Methodology:** Conventional Commits (`feat:`, `chore:`, `fix:`) with modular feature branches merged via pull requests (`#7`, `#8`, `#9`, `#10`).
 - **Audit Verification Status:**
